@@ -98,6 +98,7 @@ fun MainContent() {
     var autoBoot by remember { mutableStateOf(BootReceiver.isAutoEnableEnabled(context)) }
     var shizukuDetailsOpen by remember { mutableStateOf(false) }
     var editingPackage by remember { mutableStateOf("") }
+    var shellActivePackages by remember { mutableStateOf(emptyList<String>()) }
 
     // 自测状态
     var testRunning by remember { mutableStateOf(false) }
@@ -123,7 +124,7 @@ fun MainContent() {
             delay(1000)
             shizukuState = NativeTgkController.shizukuState()
             masterEnabled = ProfileStore.isMasterEnabled(context)
-            foreground = TriggerService.lastForeground
+            TriggerService.lastForeground.takeIf { it.isNotBlank() }?.let { foreground = it }
             nativeStatus = NativeTgkController.lastStatus
         }
     }
@@ -135,6 +136,19 @@ fun MainContent() {
             rightHits = TriggerInputMonitor.rightHits
             touchHits = TriggerInputMonitor.touchHits
             lastTouch = TriggerInputMonitor.lastTouchEvent
+        }
+    }
+
+    // 主动获取活跃/前台应用（shell getActivePackages），不依赖守护是否运行。
+    LaunchedEffect(shizukuState) {
+        while (true) {
+            if (shizukuUsable) {
+                NativeTgkController.refreshActivePackages { packages ->
+                    shellActivePackages = packages
+                    packages.firstOrNull()?.takeIf { it.isNotBlank() }?.let { foreground = it }
+                }
+            }
+            delay(3500)
         }
     }
 
@@ -191,6 +205,7 @@ fun MainContent() {
                 context = context,
                 profiles = profiles,
                 foreground = foreground,
+                activePackages = shellActivePackages,
                 editingPackage = editingPackage,
                 onAdd = { pkg ->
                     if (profiles.none { it.packageName == pkg }) {
@@ -339,6 +354,7 @@ private fun ProfilesCard(
     context: Context,
     profiles: List<AppProfile>,
     foreground: String,
+    activePackages: List<String>,
     editingPackage: String,
     onAdd: (String) -> Unit,
     onToggleProfile: (String, Boolean) -> Unit,
@@ -381,7 +397,7 @@ private fun ProfilesCard(
         AddProfileMenu(
             context = context,
             existing = profiles.map { it.packageName }.toSet(),
-            foreground = foreground,
+            activePackages = activePackages,
             onAdd = onAdd
         )
     }
@@ -496,13 +512,13 @@ private fun ProfileEditor(profile: AppProfile, onChange: (AppProfile) -> Unit) {
 private fun AddProfileMenu(
     context: Context,
     existing: Set<String>,
-    foreground: String,
+    activePackages: List<String>,
     onAdd: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showAll by remember { mutableStateOf(false) }
-    val candidates = remember(existing, foreground, showAll) {
-        addCandidates(context, existing, foreground, showAll)
+    val candidates = remember(existing, activePackages, showAll) {
+        addCandidates(context, existing, activePackages, showAll)
     }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
         OutlinedTextField(
@@ -1014,7 +1030,7 @@ private fun selfTestProfile(context: Context): AppProfile {
 private fun addCandidates(
     context: Context,
     existing: Set<String>,
-    foreground: String,
+    activePackages: List<String>,
     showAll: Boolean
 ): List<Pair<String, String>> {
     val result = LinkedHashMap<String, String>()
@@ -1022,7 +1038,7 @@ private fun addCandidates(
         if (pkg.isBlank() || pkg == "null" || pkg in existing || pkg in result) return
         result[pkg] = ProfileStore.labelFor(context, pkg)
     }
-    if (foreground.isNotBlank() && foreground != context.packageName) add(foreground)
+    activePackages.forEach { if (it != context.packageName) add(it) }
     ProfileStore.recentTargets(context).forEach(::add)
     if (showAll) {
         loadLaunchableApps(context).forEach { (pkg, _) -> add(pkg) }
