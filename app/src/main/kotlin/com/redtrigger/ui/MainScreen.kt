@@ -71,6 +71,7 @@ import com.redtrigger.ScreenOrientation
 import com.redtrigger.TriggerPoint
 import com.redtrigger.TriggerService
 import kotlinx.coroutines.delay
+import kotlin.random.Random
 
 private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
 
@@ -471,6 +472,7 @@ private fun ProfileRow(
 
 @Composable
 private fun ProfileEditor(profile: AppProfile, onChange: (AppProfile) -> Unit) {
+    val ctx = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Divider(color = StrokeDim)
         Text("屏幕方向（决定坐标系，游戏多为横屏）", style = MaterialTheme.typography.bodySmall, color = TextDim)
@@ -512,6 +514,10 @@ private fun ProfileEditor(profile: AppProfile, onChange: (AppProfile) -> Unit) {
                 onChange(profile.copy(rapidFire = it.coerceAtLeast(1)))
             }
         }
+        OutlinedButton(onClick = {
+            val (l, r) = defaultPointsFor(profile.orientation, ctx)
+            onChange(profile.copy(left = l, right = r))
+        }) { Text("随机生成坐标（屏幕中部）") }
         Text(
             text = "提示：坐标是“${orientationLabel(profile.orientation)}下的屏幕像素”。用系统截图找按钮位置，或先用自测确认肩键命中。",
             style = MaterialTheme.typography.labelSmall,
@@ -544,24 +550,32 @@ private fun AddProfileMenu(
             singleLine = true
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            candidates.forEach { (label, pkg) ->
+            candidates.forEach { item ->
                 DropdownMenuItem(
+                    enabled = !item.isHeader,
                     text = {
-                        if (pkg == SHOW_ALL) {
-                            Text(label, color = StateBlue)
-                        } else {
-                            Column {
-                                Text(label)
-                                Text(pkg, style = MaterialTheme.typography.bodySmall, color = TextDim)
+                        when {
+                            item.isHeader -> Text(
+                                item.label,
+                                color = TextDim,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                            item.pkg == SHOW_ALL -> Text(item.label, color = StateBlue)
+                            else -> Column {
+                                Text(item.label)
+                                Text(item.pkg, style = MaterialTheme.typography.bodySmall, color = TextDim)
                             }
                         }
                     },
                     onClick = {
-                        if (pkg == SHOW_ALL) {
-                            showAll = true
-                        } else {
-                            onAdd(pkg)
-                            expanded = false
+                        when {
+                            item.isHeader -> {}
+                            item.pkg == SHOW_ALL -> showAll = true
+                            else -> {
+                                onAdd(item.pkg)
+                                expanded = false
+                            }
                         }
                     }
                 )
@@ -1090,15 +1104,19 @@ private fun physicalEdges(context: Context): Pair<Int, Int> {
 }
 
 /** 给新 profile 一个一定落在屏内的初始坐标（中心偏右），用户再按需微调。 */
+/** 给新 profile 一个落在屏内中部、左右略分开的随机初始坐标，便于先验证再微调（取点页面以后做）。 */
 private fun defaultPointsFor(orientation: ScreenOrientation, context: Context): Pair<TriggerPoint, TriggerPoint> {
     val (longEdge, shortEdge) = physicalEdges(context)
-    return if (orientation == ScreenOrientation.LANDSCAPE) {
-        TriggerPoint((longEdge * 0.5).toInt(), (shortEdge * 0.45).toInt()) to
-            TriggerPoint((longEdge * 0.6).toInt(), (shortEdge * 0.35).toInt())
-    } else {
-        TriggerPoint((shortEdge * 0.5).toInt(), (longEdge * 0.45).toInt()) to
-            TriggerPoint((shortEdge * 0.6).toInt(), (longEdge * 0.35).toInt())
+    val w = if (orientation == ScreenOrientation.LANDSCAPE) longEdge else shortEdge
+    val h = if (orientation == ScreenOrientation.LANDSCAPE) shortEdge else longEdge
+    fun near(centerFrac: Double, dim: Int): Int {
+        val c = (dim * centerFrac).toInt()
+        val span = (dim * 0.08).toInt().coerceAtLeast(1)
+        return (c + Random.nextInt(-span, span + 1)).coerceIn(0, dim)
     }
+    val left = TriggerPoint(near(0.40, w), near(0.50, h))
+    val right = TriggerPoint(near(0.60, w), near(0.50, h))
+    return left to right
 }
 
 /** 自测用的临时 profile：本 app（竖屏），左右映射到窗口内不同高度的合法点。 */
@@ -1119,24 +1137,37 @@ private fun selfTestProfile(context: Context): AppProfile {
     )
 }
 
+private data class AddItem(val label: String, val pkg: String, val isHeader: Boolean = false)
+
 private fun addCandidates(
     context: Context,
     existing: Set<String>,
     activePackages: List<String>,
     showAll: Boolean
-): List<Pair<String, String>> {
-    val result = LinkedHashMap<String, String>()
-    fun add(pkg: String) {
-        if (pkg.isBlank() || pkg == "null" || pkg in existing || pkg in result) return
-        result[pkg] = ProfileStore.labelFor(context, pkg)
+): List<AddItem> {
+    val items = mutableListOf<AddItem>()
+    val used = HashSet(existing)
+
+    fun section(title: String, pkgs: List<String>) {
+        val valid = pkgs.asSequence()
+            .filter { it.isNotBlank() && it != "null" && it != context.packageName && it !in used }
+            .distinct()
+            .toList()
+        if (valid.isEmpty()) return
+        items.add(AddItem(title, "", isHeader = true))
+        valid.forEach { pkg ->
+            items.add(AddItem(ProfileStore.labelFor(context, pkg), pkg))
+            used.add(pkg)
+        }
     }
-    activePackages.forEach { if (it != context.packageName) add(it) }
-    ProfileStore.recentTargets(context).forEach(::add)
+
+    section("活跃 / 前台应用", activePackages)
+    section("最近应用", ProfileStore.recentTargets(context))
     if (showAll) {
-        loadLaunchableApps(context).forEach { (pkg, _) -> add(pkg) }
+        section("全部应用", loadLaunchableApps(context).map { it.first })
+    } else {
+        items.add(AddItem("从全部应用中选择…", SHOW_ALL))
     }
-    val items = result.entries.map { (pkg, label) -> label to pkg }.toMutableList()
-    if (!showAll) items.add("从全部应用中选择…" to SHOW_ALL)
     return items
 }
 
