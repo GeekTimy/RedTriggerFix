@@ -23,6 +23,9 @@ object NativeTgkController {
     @Volatile var lastForegroundPackage: String = ""
         private set
 
+    @Volatile var selfTestRunning: Boolean = false
+        private set
+
     private var inputService: IInputService? = null
     private var appContext: Context? = null
     private val pendingReady = CopyOnWriteArrayList<() -> Unit>()
@@ -245,6 +248,7 @@ object NativeTgkController {
 
     /** Self-test: enable TGK to the given (off-screen) profile and start a continuous shoulder probe. */
     fun startSelfTest(profile: AppProfile) {
+        selfTestRunning = true
         connect {
             try {
                 prepareOwnerIfNeeded()
@@ -264,6 +268,7 @@ object NativeTgkController {
 
     /** Stop the self-test probe and fully release TGK (clean, no lingering config). */
     fun stopSelfTest() {
+        selfTestRunning = false
         try {
             inputService?.stopShoulderProbe()
             inputService?.releaseTgk()

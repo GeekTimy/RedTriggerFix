@@ -6,6 +6,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,6 +46,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,8 +55,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -64,7 +68,6 @@ import com.redtrigger.BootReceiver
 import com.redtrigger.NativeTgkController
 import com.redtrigger.ProfileStore
 import com.redtrigger.ScreenOrientation
-import com.redtrigger.TriggerInputMonitor
 import com.redtrigger.TriggerPoint
 import com.redtrigger.TriggerService
 import kotlinx.coroutines.delay
@@ -100,14 +103,12 @@ fun MainContent() {
     var editingPackage by remember { mutableStateOf("") }
     var shellActivePackages by remember { mutableStateOf(emptyList<String>()) }
 
-    // 自测状态
+    // 自测状态（实时底层 probe；不再依赖 app 收键/触摸）
     var testRunning by remember { mutableStateOf(false) }
-    var testStatus by remember { mutableStateOf("尚未开始测试") }
-    var leftHits by remember { mutableStateOf(0) }
-    var rightHits by remember { mutableStateOf(0) }
-    var touchHits by remember { mutableStateOf(0) }
-    var lastTouch by remember { mutableStateOf(TriggerInputMonitor.lastTouchEvent) }
-    var probeStatus by remember { mutableStateOf("result=not_started\nleft=0\nright=0") }
+    var testStatus by remember { mutableStateOf("未开始：点“开始监听”后按肩键，计数实时更新") }
+    var probeStatus by remember { mutableStateOf("result=idle\nleft=0\nright=0\ndevices=") }
+    var showTouches by remember { mutableStateOf(false) }
+    var pointerLocation by remember { mutableStateOf(false) }
 
     val shizukuUsable = shizukuState in listOf(
         NativeTgkController.ShizukuState.AUTHORIZED,
@@ -129,13 +130,29 @@ fun MainContent() {
         }
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(180)
-            leftHits = TriggerInputMonitor.leftHits
-            rightHits = TriggerInputMonitor.rightHits
-            touchHits = TriggerInputMonitor.touchHits
-            lastTouch = TriggerInputMonitor.lastTouchEvent
+    // 自测运行时实时拉取底层 probe 计数，并同步外部（onPause）停止。
+    LaunchedEffect(testRunning) {
+        while (testRunning) {
+            probeStatus = NativeTgkController.probeCounts()
+            if (!NativeTgkController.selfTestRunning) testRunning = false
+            delay(250)
+        }
+    }
+
+    // 初始化/刷新两个调试开关的真实状态。
+    LaunchedEffect(shizukuState) {
+        if (shizukuUsable) {
+            NativeTgkController.debugToggles { toggles ->
+                showTouches = statusValue(toggles, "show_touches") == "1"
+                pointerLocation = statusValue(toggles, "pointer_location") == "1"
+            }
+        }
+    }
+
+    // 离开界面时确保停止自测并释放。
+    DisposableEffect(Unit) {
+        onDispose {
+            if (NativeTgkController.selfTestRunning) NativeTgkController.stopSelfTest()
         }
     }
 
@@ -247,34 +264,32 @@ fun MainContent() {
             SelfTestCard(
                 shizukuUsable = shizukuUsable,
                 running = testRunning,
-                leftHits = leftHits,
-                rightHits = rightHits,
-                touchHits = touchHits,
-                lastTouch = lastTouch,
                 probeStatus = probeStatus,
                 testStatus = testStatus,
+                showTouches = showTouches,
+                pointerLocation = pointerLocation,
+                onToggleShowTouches = { on ->
+                    showTouches = on
+                    NativeTgkController.setShowTouches(on)
+                },
+                onTogglePointer = { on ->
+                    pointerLocation = on
+                    NativeTgkController.setPointerLocation(on)
+                },
                 onStart = {
                     if (!shizukuUsable) {
                         testStatus = "Shizuku 未就绪，先完成授权和连接"
                     } else {
-                        TriggerInputMonitor.reset()
-                        leftHits = 0; rightHits = 0; touchHits = 0
-                        probeStatus = "result=sampling\nleft=0\nright=0"
+                        probeStatus = "result=sampling\nleft=0\nright=0\ndevices="
                         testRunning = true
-                        val self = selfTestProfile(context)
-                        // 临时把肩键映射到本 app 窗口内合法坐标（竖屏中心区），测完会 releaseTgk 恢复。
-                        NativeTgkController.enable(self, logResult = true)
-                        testStatus = "已临时启用自测映射，6 秒内按左右肩键 L/R"
-                        NativeTgkController.probeShoulderKeys(6000) { result ->
-                            probeStatus = result
-                            testStatus = shoulderProbeAdvice(result) + "；按完点“停止并恢复”"
-                        }
+                        NativeTgkController.startSelfTest(selfTestProfile(context))
+                        testStatus = "监听中：按左右肩键，计数实时更新；完成点“停止并恢复”"
                     }
                 },
                 onStop = {
-                    NativeTgkController.releaseTgk()
+                    NativeTgkController.stopSelfTest()
                     testRunning = false
-                    testStatus = "已停止并释放（releaseTgk），未改动任何应用的配置"
+                    testStatus = "已停止并释放（releaseTgk），未改动任何应用配置"
                 }
             )
 
@@ -284,9 +299,7 @@ fun MainContent() {
                 foreground = foreground,
                 serviceRunning = TriggerService.isRunning,
                 nativeStatus = nativeStatus,
-                leftHits = leftHits,
-                rightHits = rightHits,
-                touchHits = touchHits,
+                probeStatus = probeStatus,
                 autoBoot = autoBoot,
                 onAutoBoot = { BootReceiver.setAutoEnable(context, it); autoBoot = it },
                 onRefresh = {
@@ -565,33 +578,33 @@ private fun AddProfileMenu(
 private fun SelfTestCard(
     shizukuUsable: Boolean,
     running: Boolean,
-    leftHits: Int,
-    rightHits: Int,
-    touchHits: Int,
-    lastTouch: String,
     probeStatus: String,
     testStatus: String,
+    showTouches: Boolean,
+    pointerLocation: Boolean,
+    onToggleShowTouches: (Boolean) -> Unit,
+    onTogglePointer: (Boolean) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit
 ) {
+    val left = statusValue(probeStatus, "left")?.toIntOrNull() ?: 0
+    val right = statusValue(probeStatus, "right")?.toIntOrNull() ?: 0
     PanelSurface {
-        Text("自测：验证肩键效果", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("自测：验证肩键事件", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text(
-            text = "把肩键临时映射到本应用窗口内，按 L/R 看是否真的产生触摸。测完一键释放，不改动任何应用配置。",
+            text = "按肩键看是否被系统识别（底层 F7/F8，实时计数）。映射在屏幕外，不会误触本应用；配合下方调试叠加可直接看到注入的触摸点。",
             style = MaterialTheme.typography.bodySmall,
             color = TextDim
         )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TestCounterBox("L 键 (F7)", leftHits, AccentRed, Modifier.weight(1f))
-            TestCounterBox("R 键 (F8)", rightHits, AccentBlue, Modifier.weight(1f))
-            TestCounterBox("触摸命中", touchHits, StateGreen, Modifier.weight(1f))
+            TestCounterBox("左肩键 F7", left, AccentRed, Modifier.weight(1f))
+            TestCounterBox("右肩键 F8", right, AccentBlue, Modifier.weight(1f))
         }
         StatusTable(
             rows = listOf(
-                "底层事件" to probeSummary(probeStatus),
-                "App 收到键" to "L=$leftHits / R=$rightHits",
-                "App 触摸命中" to "$touchHits 次",
-                "最近触摸" to lastTouch
+                "采样状态" to probeSummary(probeStatus),
+                "收到键 L / R" to "$left / $right",
+                "TGK 输入设备" to statusValue(probeStatus, "devices").orEmpty().ifBlank { "-" }
             )
         )
         Text(testStatus, style = MaterialTheme.typography.bodySmall, color = TextDim)
@@ -603,11 +616,90 @@ private fun SelfTestCard(
             ) { Text("开始监听") }
             OutlinedButton(enabled = running, onClick = onStop) { Text("停止并恢复") }
         }
+
+        Divider(color = StrokeDim)
+        Text("屏幕调试叠加", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+        DebugToggleRow(
+            kind = DebugIconKind.TOUCH,
+            title = "显示点按反馈",
+            subtitle = "屏幕上画出每次触摸落点（show_touches）",
+            checked = showTouches,
+            enabled = shizukuUsable,
+            onToggle = onToggleShowTouches
+        )
+        DebugToggleRow(
+            kind = DebugIconKind.POINTER,
+            title = "指针位置",
+            subtitle = "顶部显示坐标 + 十字准线（pointer_location）",
+            checked = pointerLocation,
+            enabled = shizukuUsable,
+            onToggle = onTogglePointer
+        )
         Text(
-            text = "说明：若“底层事件”能收到 F7/F8 但“触摸命中”为 0，可能是系统限制对非游戏应用注入，可改在真实游戏内用对应配置验证。",
+            text = "实时反馈、无需等待；按“停止并恢复”或切到别的界面会自动停止并 releaseTgk。F7/F8 有计数即说明肩键事件可被识别。",
             style = MaterialTheme.typography.labelSmall,
             color = TextDim
         )
+    }
+}
+
+private enum class DebugIconKind { TOUCH, POINTER }
+
+@Composable
+private fun DebugToggleRow(
+    kind: DebugIconKind,
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    val accent = if (checked) StateGreen else StateGray
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = accent.copy(alpha = 0.10f),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.55f))
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            DebugIcon(kind, accent)
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = TextDim)
+            }
+            Switch(checked = checked, enabled = enabled, colors = redSwitchColors(), onCheckedChange = onToggle)
+        }
+    }
+}
+
+@Composable
+private fun DebugIcon(kind: DebugIconKind, color: Color) {
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(color.copy(alpha = 0.18f))
+            .border(1.dp, color.copy(alpha = 0.8f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.size(16.dp)) {
+            when (kind) {
+                DebugIconKind.TOUCH -> {
+                    drawCircle(color = color, radius = size.minDimension / 2f, style = Stroke(width = 2.5f))
+                    drawCircle(color = color, radius = size.minDimension / 6f)
+                }
+                DebugIconKind.POINTER -> {
+                    val w = size.width
+                    val h = size.height
+                    drawLine(color, Offset(w / 2f, 0f), Offset(w / 2f, h), strokeWidth = 2.5f)
+                    drawLine(color, Offset(0f, h / 2f), Offset(w, h / 2f), strokeWidth = 2.5f)
+                }
+            }
+        }
     }
 }
 
@@ -639,20 +731,19 @@ private fun StatusCard(
     foreground: String,
     serviceRunning: Boolean,
     nativeStatus: String,
-    leftHits: Int,
-    rightHits: Int,
-    touchHits: Int,
+    probeStatus: String,
     autoBoot: Boolean,
     onAutoBoot: (Boolean) -> Unit,
     onRefresh: () -> Unit
 ) {
+    val left = statusValue(probeStatus, "left")?.toIntOrNull() ?: 0
+    val right = statusValue(probeStatus, "right")?.toIntOrNull() ?: 0
     PanelSurface {
         Text("运行状态", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         StatusText("Shizuku", shizukuPillText(shizukuState))
         StatusText("后端 UserService", controllerStateText(controllerState))
         StatusText("Vendor TGK 开关", tgkSummary(nativeStatus))
-        StatusText("肩键事件 F7/F8", if (leftHits + rightHits > 0) "可见 L=$leftHits R=$rightHits" else "未捕获")
-        StatusText("触摸命中(自测)", if (touchHits > 0) "$touchHits 次" else "-")
+        StatusText("肩键事件 F7/F8", if (left + right > 0) "可见 L=$left R=$right" else "未捕获")
         StatusText("守护服务", if (serviceRunning) "运行中" else "未运行")
         StatusText("前台包名", foreground.ifBlank { "-" })
         Divider(color = StrokeDim)
@@ -1012,16 +1103,17 @@ private fun defaultPointsFor(orientation: ScreenOrientation, context: Context): 
 
 /** 自测用的临时 profile：本 app（竖屏），左右映射到窗口内不同高度的合法点。 */
 private fun selfTestProfile(context: Context): AppProfile {
-    val dm = context.resources.displayMetrics
-    val w = dm.widthPixels
-    val h = dm.heightPixels
+    val (longEdge, shortEdge) = physicalEdges(context)
+    // 映射到屏幕外（底边之外），避免误触本应用 UI；靠 F7/F8 probe + show_touches 确认链路。
+    val offScreenY = longEdge + 120
+    val cx = shortEdge / 2
     return AppProfile(
         packageName = context.packageName,
         label = "自测",
         enabled = true,
         orientation = ScreenOrientation.PORTRAIT,
-        left = TriggerPoint(w / 2, (h * 0.4).toInt()),
-        right = TriggerPoint(w / 2, (h * 0.6).toInt()),
+        left = TriggerPoint(cx - 100, offScreenY),
+        right = TriggerPoint(cx + 100, offScreenY),
         mode = AppProfile.MODE_SINGLE,
         rapidFire = 1
     )
