@@ -243,6 +243,61 @@ object NativeTgkController {
         }
     }
 
+    /** Self-test: enable TGK to the given (off-screen) profile and start a continuous shoulder probe. */
+    fun startSelfTest(profile: AppProfile) {
+        connect {
+            try {
+                prepareOwnerIfNeeded()
+                inputService?.enableNativeTgk(
+                    profile.left.x, profile.left.y,
+                    profile.right.x, profile.right.y,
+                    profile.mode, profile.rapidFire
+                )
+                inputService?.startShoulderProbe()
+                refreshStatus()
+                DebugLog.log("NativeTGK", "Self-test started")
+            } catch (e: Exception) {
+                DebugLog.log("NativeTGK", "Self-test start failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Stop the self-test probe and fully release TGK (clean, no lingering config). */
+    fun stopSelfTest() {
+        try {
+            inputService?.stopShoulderProbe()
+            inputService?.releaseTgk()
+            refreshStatus()
+            DebugLog.log("NativeTGK", "Self-test stopped & released")
+        } catch (e: Exception) {
+            DebugLog.log("NativeTGK", "Self-test stop failed: ${e.message}")
+        }
+    }
+
+    /** Synchronous probe-count read for the UI poll loop. */
+    fun probeCounts(): String = try {
+        inputService?.getProbeCounts() ?: "result=not_connected\nleft=0\nright=0"
+    } catch (_: Exception) {
+        "result=error\nleft=0\nright=0"
+    }
+
+    fun setShowTouches(enable: Boolean) {
+        connect { try { inputService?.setShowTouches(enable) } catch (_: Exception) {} }
+    }
+
+    fun setPointerLocation(enable: Boolean) {
+        connect { try { inputService?.setPointerLocation(enable) } catch (_: Exception) {} }
+    }
+
+    fun debugToggles(onResult: (String) -> Unit) {
+        connect {
+            Thread {
+                val r = try { inputService?.getDebugToggles() ?: "" } catch (_: Exception) { "" }
+                mainHandler.post { onResult(r) }
+            }.start()
+        }
+    }
+
     fun stop(disableNative: Boolean = true) {
         if (disableNative) {
             disable()

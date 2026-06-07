@@ -25,8 +25,18 @@ interface IInputService {
     /** Return recent and running packages visible to shell. */
     String getActivePackages();
 
-    /** Sample native TGK input devices for shoulder-key events. */
+    /** Sample native TGK input devices for shoulder-key events (one-shot, fixed window). */
     String probeShoulderKeys(int timeoutMs);
+
+    /** Continuous, event-driven shoulder-key probe (no fixed timeout). */
+    void startShoulderProbe();
+    void stopShoulderProbe();
+    String getProbeCounts();
+
+    /** Developer-options visual debug toggles, written via shell to Settings.System. */
+    void setShowTouches(boolean enable);
+    void setPointerLocation(boolean enable);
+    String getDebugToggles();
 
     /** Destroy the service. */
     void destroy();

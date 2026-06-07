@@ -29,6 +29,13 @@ class InputService : IInputService.Stub() {
         val name: String
     )
 
+    @Volatile private var probeLeft = 0
+    @Volatile private var probeRight = 0
+    @Volatile private var probeResult = "idle"
+    @Volatile private var probeDevicesInfo = ""
+    private val probeProcesses = java.util.concurrent.CopyOnWriteArrayList<java.lang.Process>()
+    private val probeThreads = java.util.concurrent.CopyOnWriteArrayList<Thread>()
+
     private val inputManager: Any by lazy {
         val serviceManager = Class.forName("android.os.ServiceManager")
         val binder = serviceManager
@@ -197,6 +204,72 @@ class InputService : IInputService.Stub() {
             "result=$result",
             "raw=${output.takeLast(1200).replace('\n', '|')}"
         ).joinToString("\n")
+    }
+
+    override fun startShoulderProbe() {
+        stopShoulderProbe()
+        probeLeft = 0
+        probeRight = 0
+        val devices = findTgkInputDevices()
+        probeDevicesInfo = devices.joinToString(",") { "${it.side}:${it.path}" }
+        if (devices.isEmpty()) {
+            probeResult = "no_tgk_input_device"
+            return
+        }
+        probeResult = "sampling"
+        devices.forEach { device ->
+            val thread = Thread {
+                try {
+                    val proc = ProcessBuilder("getevent", "-lt", device.path)
+                        .redirectErrorStream(true)
+                        .start()
+                    probeProcesses.add(proc)
+                    proc.inputStream.bufferedReader().forEachLine { line ->
+                        if (isShoulderDownLine(line)) {
+                            when (device.side) {
+                                "left" -> probeLeft++
+                                "right" -> probeRight++
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            thread.isDaemon = true
+            probeThreads.add(thread)
+            thread.start()
+        }
+    }
+
+    override fun stopShoulderProbe() {
+        probeProcesses.forEach { runCatching { it.destroyForcibly() } }
+        probeProcesses.clear()
+        probeThreads.forEach { runCatching { it.interrupt() } }
+        probeThreads.clear()
+        if (probeResult == "sampling") probeResult = "stopped"
+    }
+
+    override fun getProbeCounts(): String {
+        return "left=$probeLeft\nright=$probeRight\nresult=$probeResult\ndevices=$probeDevicesInfo"
+    }
+
+    override fun setShowTouches(enable: Boolean) {
+        runCommand("settings", "put", "system", "show_touches", if (enable) "1" else "0")
+    }
+
+    override fun setPointerLocation(enable: Boolean) {
+        runCommand("settings", "put", "system", "pointer_location", if (enable) "1" else "0")
+    }
+
+    override fun getDebugToggles(): String {
+        val showTouches = runCommand("settings", "get", "system", "show_touches").trim()
+        val pointer = runCommand("settings", "get", "system", "pointer_location").trim()
+        return "show_touches=$showTouches\npointer_location=$pointer"
+    }
+
+    /** getevent -l 把 EV_KEY 的按下翻译为 DOWN（抬起为 UP）。只计按下沿，避免噪声。 */
+    private fun isShoulderDownLine(line: String): Boolean {
+        return line.contains("DOWN")
     }
 
     private fun getForegroundPackageByActivityTaskManager(): String {
@@ -386,6 +459,7 @@ class InputService : IInputService.Stub() {
     }
 
     override fun destroy() {
+        stopShoulderProbe()
         Log.i(TAG, "destroy")
     }
 
