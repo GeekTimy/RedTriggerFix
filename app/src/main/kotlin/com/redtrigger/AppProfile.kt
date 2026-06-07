@@ -25,13 +25,14 @@ data class AppProfile(
     val packageName: String,
     val label: String,
     val enabled: Boolean = true,
-    val orientation: ScreenOrientation = ScreenOrientation.LANDSCAPE,
+    val orientation: ScreenOrientation = ScreenOrientation.PORTRAIT,
     val left: TriggerPoint,
     val right: TriggerPoint,
-    val mode: Int = MODE_RAPID,
+    val mode: Int = MODE_SINGLE,
     val rapidFire: Int = 10,
     val leftEnabled: Boolean = true,
-    val rightEnabled: Boolean = true
+    val rightEnabled: Boolean = true,
+    val showOverlayMarkers: Boolean = false
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put(K_PKG, packageName)
@@ -42,6 +43,7 @@ data class AppProfile(
         put(K_RX, right.x); put(K_RY, right.y)
         put(K_MODE, mode); put(K_FIRE, rapidFire)
         put(K_LEN, leftEnabled); put(K_REN, rightEnabled)
+        put(K_SHOW_MARKERS, showOverlayMarkers)
     }
 
     companion object {
@@ -60,20 +62,22 @@ data class AppProfile(
         private const val K_FIRE = "fire"
         private const val K_LEN = "lEn"
         private const val K_REN = "rEn"
+        private const val K_SHOW_MARKERS = "showMarkers"
 
         fun fromJson(o: JSONObject): AppProfile = AppProfile(
             packageName = o.getString(K_PKG),
             label = o.optString(K_LABEL, o.getString(K_PKG)),
             enabled = o.optBoolean(K_ENABLED, true),
             orientation = runCatching {
-                ScreenOrientation.valueOf(o.optString(K_ORIENT, ScreenOrientation.LANDSCAPE.name))
-            }.getOrDefault(ScreenOrientation.LANDSCAPE),
+                ScreenOrientation.valueOf(o.optString(K_ORIENT, ScreenOrientation.PORTRAIT.name))
+            }.getOrDefault(ScreenOrientation.PORTRAIT),
             left = TriggerPoint(o.optInt(K_LX, -1), o.optInt(K_LY, -1)),
             right = TriggerPoint(o.optInt(K_RX, -1), o.optInt(K_RY, -1)),
-            mode = o.optInt(K_MODE, MODE_RAPID),
+            mode = o.optInt(K_MODE, MODE_SINGLE),
             rapidFire = o.optInt(K_FIRE, 10),
             leftEnabled = o.optBoolean(K_LEN, true),
-            rightEnabled = o.optBoolean(K_REN, true)
+            rightEnabled = o.optBoolean(K_REN, true),
+            showOverlayMarkers = o.optBoolean(K_SHOW_MARKERS, false)
         )
 
         fun listToJson(profiles: List<AppProfile>): String {

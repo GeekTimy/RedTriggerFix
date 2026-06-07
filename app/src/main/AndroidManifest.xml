@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Package visibility for Shizuku, launcher app selection, and RedMagic Game Space services. -->
     <queries>
@@ -78,6 +79,11 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps shoulder trigger sensors active by monitoring system settings" />
         </service>
+
+        <!-- Short-lived overlay picker for dragging L/R markers over the target app. -->
+        <service
+            android:name=".OverlayPickService"
+            android:exported="false" />
     </application>
 
 </manifest>

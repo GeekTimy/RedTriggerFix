@@ -3,6 +3,9 @@ package com.redtrigger.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
@@ -41,8 +44,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -60,14 +61,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.redtrigger.AppProfile
 import com.redtrigger.BootReceiver
 import com.redtrigger.NativeTgkController
+import com.redtrigger.OverlayPickService
 import com.redtrigger.ProfileStore
 import com.redtrigger.ScreenOrientation
 import com.redtrigger.TriggerPoint
@@ -78,6 +83,8 @@ private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
 
 private val AccentRed = Color(0xFFFF1744)
 private val AccentBlue = Color(0xFF2B72FF)
+private val ShoulderPink = Color(0xFFFFA8C8)
+private val ShoulderBlue = Color(0xFF9FD5FF)
 private val PanelSoft = Color(0xE51A1C27)
 private val StrokeDim = Color(0x33FFFFFF)
 private val TextDim = Color(0xFFB9BDCA)
@@ -127,6 +134,7 @@ fun MainContent() {
             delay(1000)
             shizukuState = NativeTgkController.shizukuState()
             masterEnabled = ProfileStore.isMasterEnabled(context)
+            profiles = ProfileStore.loadProfiles(context)
             TriggerService.lastForeground.takeIf { it.isNotBlank() }?.let { foreground = it }
             nativeStatus = NativeTgkController.lastStatus
         }
@@ -228,18 +236,20 @@ fun MainContent() {
                 editingPackage = editingPackage,
                 onAdd = { pkg ->
                     if (profiles.none { it.packageName == pkg }) {
-                        val (l, r) = defaultPointsFor(ScreenOrientation.LANDSCAPE, context)
+                        val (l, r) = defaultPointsFor(ScreenOrientation.PORTRAIT, context)
                         ProfileStore.upsertProfile(
                             context,
                             AppProfile(
                                 packageName = pkg,
                                 label = ProfileStore.labelFor(context, pkg),
                                 enabled = true,
-                                orientation = ScreenOrientation.LANDSCAPE,
+                                orientation = ScreenOrientation.PORTRAIT,
                                 left = l,
                                 right = r,
-                                mode = AppProfile.MODE_RAPID,
-                                rapidFire = 10
+                                mode = AppProfile.MODE_SINGLE,
+                                rapidFire = FREQ_MID_VALUE,
+                                leftEnabled = true,
+                                rightEnabled = true
                             )
                         )
                         reloadProfiles()
@@ -260,7 +270,8 @@ fun MainContent() {
                     if (editingPackage == pkg) editingPackage = ""
                     reloadProfiles()
                 },
-                onOpen = { pkg -> openPackage(context, pkg) }
+                onOpen = { pkg -> openPackage(context, pkg) },
+                onPickOverlay = { profile -> startOverlayPicker(context, profile) }
             )
 
             SelfTestCard(
@@ -336,7 +347,10 @@ private fun MasterSwitchCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 Text("肩键守护", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text(
                     text = when {
@@ -346,7 +360,9 @@ private fun MasterSwitchCard(
                         else -> "开启后，打开任一已配置应用会自动套用其肩键"
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = TextDim
+                    color = TextDim,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             Switch(
@@ -376,7 +392,8 @@ private fun ProfilesCard(
     onEditToggle: (String) -> Unit,
     onChangeProfile: (AppProfile) -> Unit,
     onDelete: (String) -> Unit,
-    onOpen: (String) -> Unit
+    onOpen: (String) -> Unit,
+    onPickOverlay: (AppProfile) -> Unit
 ) {
     PanelSurface {
         Text("已配置应用", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -404,7 +421,8 @@ private fun ProfilesCard(
                 onEditToggle = { onEditToggle(profile.packageName) },
                 onChange = onChangeProfile,
                 onDelete = { onDelete(profile.packageName) },
-                onOpen = { onOpen(profile.packageName) }
+                onOpen = { onOpen(profile.packageName) },
+                onPickOverlay = { onPickOverlay(profile) }
             )
         }
 
@@ -427,7 +445,8 @@ private fun ProfileRow(
     onEditToggle: () -> Unit,
     onChange: (AppProfile) -> Unit,
     onDelete: () -> Unit,
-    onOpen: () -> Unit
+    onOpen: () -> Unit,
+    onPickOverlay: () -> Unit
 ) {
     val accent = if (profile.enabled) AccentRed else StateGray
     Surface(
@@ -444,97 +463,293 @@ private fun ProfileRow(
             ) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(profile.label, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            profile.label,
+                            modifier = Modifier.weight(1f, fill = false),
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         if (isForeground) {
                             Text("前台", color = StateGreen, style = MaterialTheme.typography.labelSmall)
                         }
                     }
-                    Text(profile.packageName, style = MaterialTheme.typography.bodySmall, color = TextDim)
+                    Text(
+                        profile.packageName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextDim,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text(
                         text = "${orientationLabel(profile.orientation)} · ${modeLabel(profile)} · " +
                             "L(${profile.left.x},${profile.left.y}) R(${profile.right.x},${profile.right.y})",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextDim
+                        color = TextDim,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Switch(checked = profile.enabled, colors = redSwitchColors(), onCheckedChange = onToggle)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onEditToggle) { Text(if (expanded) "收起" else "编辑") }
-                OutlinedButton(onClick = onOpen) { Text("打开") }
-                OutlinedButton(onClick = onDelete) { Text("删除") }
+                OutlinedButton(modifier = Modifier.weight(1f), onClick = onEditToggle) { Text(if (expanded) "收起" else "编辑") }
+                OutlinedButton(modifier = Modifier.weight(1f), onClick = onOpen) { Text("打开") }
+                OutlinedButton(modifier = Modifier.weight(1f), onClick = onDelete) { Text("删除") }
             }
             AnimatedVisibility(visible = expanded) {
-                ProfileEditor(profile = profile, onChange = onChange)
+                ProfileEditor(profile = profile, onChange = onChange, onPickOverlay = onPickOverlay)
             }
         }
     }
 }
 
 @Composable
-private fun ProfileEditor(profile: AppProfile, onChange: (AppProfile) -> Unit) {
+private fun ProfileEditor(profile: AppProfile, onChange: (AppProfile) -> Unit, onPickOverlay: () -> Unit) {
     val ctx = LocalContext.current
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Divider(color = StrokeDim)
-        Text("屏幕方向（决定坐标系，游戏多为横屏）", style = MaterialTheme.typography.bodySmall, color = TextDim)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FilterChip(
-                selected = profile.orientation == ScreenOrientation.LANDSCAPE,
-                onClick = { onChange(profile.copy(orientation = ScreenOrientation.LANDSCAPE)) },
-                label = { Text("横屏") }
-            )
-            FilterChip(
-                selected = profile.orientation == ScreenOrientation.PORTRAIT,
-                onClick = { onChange(profile.copy(orientation = ScreenOrientation.PORTRAIT)) },
-                label = { Text("竖屏") }
+
+        EditorSummary(profile)
+
+        EditorSection(
+            index = "1",
+            title = "基础",
+            subtitle = "方向只影响坐标系；多数游戏保持横屏。"
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ChoiceTile(
+                    title = "竖屏",
+                    subtitle = "应用/竖屏游戏",
+                    selected = profile.orientation == ScreenOrientation.PORTRAIT,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        val (l, r) = defaultPointsFor(ScreenOrientation.PORTRAIT, ctx)
+                        onChange(profile.copy(orientation = ScreenOrientation.PORTRAIT, left = l, right = r))
+                    }
+                )
+                ChoiceTile(
+                    title = "横屏",
+                    subtitle = "游戏常用",
+                    selected = profile.orientation == ScreenOrientation.LANDSCAPE,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        val (l, r) = defaultPointsFor(ScreenOrientation.LANDSCAPE, ctx)
+                        onChange(profile.copy(orientation = ScreenOrientation.LANDSCAPE, left = l, right = r))
+                    }
+                )
+            }
+        }
+
+        EditorSection(
+            index = "2",
+            title = "触发",
+            subtitle = "单点跟随按压；连发按住重复触发。"
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ChoiceTile(
+                    title = "单点",
+                    subtitle = "轻按/长按同步",
+                    selected = profile.mode == AppProfile.MODE_SINGLE,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onChange(profile.copy(mode = AppProfile.MODE_SINGLE)) }
+                )
+                ChoiceTile(
+                    title = "连发",
+                    subtitle = "${profile.rapidFire.coerceIn(FREQ_MIN, FREQ_MAX)}/s",
+                    selected = profile.mode == AppProfile.MODE_RAPID,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        onChange(
+                            profile.copy(
+                                mode = AppProfile.MODE_RAPID,
+                                rapidFire = profile.rapidFire.coerceIn(FREQ_MIN, FREQ_MAX)
+                            )
+                        )
+                    }
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ShoulderToggle(
+                    label = "L",
+                    title = "左肩键",
+                    enabled = profile.leftEnabled,
+                    color = ShoulderPink,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onChange(profile.copy(leftEnabled = !profile.leftEnabled)) }
+                )
+                ShoulderToggle(
+                    label = "R",
+                    title = "右肩键",
+                    enabled = profile.rightEnabled,
+                    color = ShoulderBlue,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onChange(profile.copy(rightEnabled = !profile.rightEnabled)) }
+                )
+            }
+            if (profile.mode == AppProfile.MODE_RAPID) {
+                FrequencyControl(profile.rapidFire) { onChange(profile.copy(rapidFire = it)) }
+            }
+        }
+
+        EditorSection(
+            index = "3",
+            title = "坐标",
+            subtitle = "${orientationLabel(profile.orientation)}像素坐标；取点页面后续再做。"
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumberField("左 X", profile.left.x, Modifier.weight(1f)) { onChange(profile.copy(left = profile.left.copy(x = it))) }
+                NumberField("左 Y", profile.left.y, Modifier.weight(1f)) { onChange(profile.copy(left = profile.left.copy(y = it))) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumberField("右 X", profile.right.x, Modifier.weight(1f)) { onChange(profile.copy(right = profile.right.copy(x = it))) }
+                NumberField("右 Y", profile.right.y, Modifier.weight(1f)) { onChange(profile.copy(right = profile.right.copy(y = it))) }
+            }
+            OutlinedButton(onClick = {
+                val (l, r) = defaultPointsFor(profile.orientation, ctx)
+                onChange(profile.copy(left = l, right = r))
+            }) { Text("重置为默认坐标") }
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = StateBlue),
+                onClick = onPickOverlay
+            ) { Text("在目标应用上悬浮取点") }
+            ToggleLine("在目标应用中显示 L/R 标记", profile.showOverlayMarkers) { checked ->
+                if (checked && !Settings.canDrawOverlays(ctx)) {
+                    Toast.makeText(ctx, "先授予悬浮窗权限，才能显示 L/R 标记", Toast.LENGTH_SHORT).show()
+                    ctx.startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${ctx.packageName}")
+                        )
+                    )
+                } else {
+                    onChange(profile.copy(showOverlayMarkers = checked))
+                }
+            }
+            Text(
+                text = "开启后，进入该应用时会保留半透明 L/R 标记；标记不接收触摸，不影响应用操作。",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextDim
             )
         }
-        Text("点按模式", style = MaterialTheme.typography.bodySmall, color = TextDim)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FilterChip(
-                selected = profile.mode == AppProfile.MODE_SINGLE,
-                onClick = { onChange(profile.copy(mode = AppProfile.MODE_SINGLE)) },
-                label = { Text("单点") }
-            )
-            FilterChip(
-                selected = profile.mode == AppProfile.MODE_RAPID,
-                onClick = { onChange(profile.copy(mode = AppProfile.MODE_RAPID, rapidFire = profile.rapidFire.coerceIn(FREQ_MIN, FREQ_MAX))) },
-                label = { Text("连点") }
-            )
-        }
-        Text("启用哪侧肩键（关闭即禁用该侧，不激活）", style = MaterialTheme.typography.bodySmall, color = TextDim)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            FilterChip(
-                selected = profile.leftEnabled,
-                onClick = { onChange(profile.copy(leftEnabled = !profile.leftEnabled)) },
-                label = { Text(if (profile.leftEnabled) "左肩键 开" else "左肩键 禁用") }
-            )
-            FilterChip(
-                selected = profile.rightEnabled,
-                onClick = { onChange(profile.copy(rightEnabled = !profile.rightEnabled)) },
-                label = { Text(if (profile.rightEnabled) "右肩键 开" else "右肩键 禁用") }
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField("左 X", profile.left.x, Modifier.weight(1f)) { onChange(profile.copy(left = profile.left.copy(x = it))) }
-            NumberField("左 Y", profile.left.y, Modifier.weight(1f)) { onChange(profile.copy(left = profile.left.copy(y = it))) }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField("右 X", profile.right.x, Modifier.weight(1f)) { onChange(profile.copy(right = profile.right.copy(x = it))) }
-            NumberField("右 Y", profile.right.y, Modifier.weight(1f)) { onChange(profile.copy(right = profile.right.copy(y = it))) }
-        }
+
         if (profile.mode == AppProfile.MODE_RAPID) {
-            FrequencyControl(profile.rapidFire) { onChange(profile.copy(rapidFire = it)) }
+            Text(
+                text = "当前连发：按住约 ${profile.rapidFire.coerceIn(FREQ_MIN, FREQ_MAX)}/s，松开停止。",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextDim
+            )
         }
-        OutlinedButton(onClick = {
-            val (l, r) = defaultPointsFor(profile.orientation, ctx)
-            onChange(profile.copy(left = l, right = r))
-        }) { Text("重置为默认坐标") }
-        Text(
-            text = "提示：坐标是“${orientationLabel(profile.orientation)}下的屏幕像素”。用系统截图找按钮位置，或先用自测确认肩键命中。",
-            style = MaterialTheme.typography.labelSmall,
-            color = TextDim
+    }
+}
+
+@Composable
+private fun EditorSummary(profile: AppProfile) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        MiniStatusPill(orientationLabel(profile.orientation), StateBlue)
+        MiniStatusPill(modeLabel(profile), if (profile.mode == AppProfile.MODE_RAPID) FreqHigh else StateGreen)
+        MiniStatusPill(shoulderStateLabel(profile), if (profile.leftEnabled || profile.rightEnabled) ShoulderPink else StateGray)
+    }
+}
+
+@Composable
+private fun EditorSection(
+    index: String,
+    title: String,
+    subtitle: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            StatusIcon(index, AccentRed)
+            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Text(title, fontWeight = FontWeight.Bold)
+                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = TextDim)
+            }
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White.copy(alpha = 0.045f))
+                .border(1.dp, StrokeDim, RoundedCornerShape(12.dp))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            content = content
         )
+    }
+}
+
+@Composable
+private fun ChoiceTile(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val color = if (selected) AccentRed else StateGray
+    Surface(
+        modifier = modifier.height(72.dp).clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        color = color.copy(alpha = if (selected) 0.16f else 0.07f),
+        border = BorderStroke(1.dp, color.copy(alpha = if (selected) 0.70f else 0.35f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(8.dp).clip(CircleShape).background(color)
+                )
+                Text(
+                    title,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                subtitle,
+                color = TextDim,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShoulderToggle(
+    label: String,
+    title: String,
+    enabled: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val activeColor = if (enabled) color else StateGray
+    Surface(
+        modifier = modifier.height(64.dp).clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        color = activeColor.copy(alpha = if (enabled) 0.16f else 0.07f),
+        border = BorderStroke(1.dp, activeColor.copy(alpha = if (enabled) 0.70f else 0.35f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StatusIcon(label, activeColor)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (enabled) "已启用" else "已禁用", color = TextDim, style = MaterialTheme.typography.labelSmall)
+            }
+        }
     }
 }
 
@@ -623,8 +838,8 @@ private fun SelfTestCard(
             color = TextDim
         )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TestCounterBox("左肩键 F7", left, AccentRed, Modifier.weight(1f))
-            TestCounterBox("右肩键 F8", right, AccentBlue, Modifier.weight(1f))
+            TestCounterBox("左肩键 F7", left, ShoulderPink, Modifier.weight(1f))
+            TestCounterBox("右肩键 F8", right, ShoulderBlue, Modifier.weight(1f))
         }
         StatusTable(
             rows = listOf(
@@ -997,9 +1212,33 @@ private fun StatusPill(text: String, ok: Boolean) {
 }
 
 @Composable
+private fun MiniStatusPill(text: String, color: Color) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = color.copy(alpha = 0.14f),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.56f))
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
 private fun ToggleLine(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(label)
+        Text(
+            label,
+            modifier = Modifier.weight(1f).padding(end = 12.dp),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
         Switch(checked = checked, colors = redSwitchColors(), onCheckedChange = onChange)
     }
 }
@@ -1007,8 +1246,15 @@ private fun ToggleLine(label: String, checked: Boolean, onChange: (Boolean) -> U
 @Composable
 private fun StatusText(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = TextDim)
-        Text(value, fontWeight = FontWeight.SemiBold)
+        Text(label, modifier = Modifier.weight(0.42f).padding(end = 12.dp), color = TextDim)
+        Text(
+            value,
+            modifier = Modifier.weight(0.58f),
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End
+        )
     }
 }
 
@@ -1028,8 +1274,15 @@ private fun NumberField(label: String, value: Int, modifier: Modifier = Modifier
     )
 }
 
-private const val FREQ_MIN = 3
-private const val FREQ_MAX = 20
+private const val FREQ_MIN = 1
+private const val FREQ_MAX = 30
+private const val FREQ_LOW_VALUE = 6
+private const val FREQ_MID_VALUE = 12
+private const val FREQ_HIGH_VALUE = 20
+private const val FREQ_LOW_POS = 0.25f
+private const val FREQ_MID_POS = 0.60f
+private const val FREQ_HIGH_POS = 0.84f
+private const val FREQ_MAX_POS = 0.96f
 private val FreqLow = Color(0xFF2B72FF)
 private val FreqHigh = Color(0xFFFF8A00)
 
@@ -1042,22 +1295,39 @@ private fun freqColor(value: Int): Color {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FrequencyControl(value: Int, onChange: (Int) -> Unit) {
-    val color = freqColor(value)
-    var customOpen by remember { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val safeValue = value.coerceIn(FREQ_MIN, FREQ_MAX)
+    val color = freqColor(safeValue)
+    val isPreset = safeValue in listOf(FREQ_LOW_VALUE, FREQ_MID_VALUE, FREQ_HIGH_VALUE)
+    var customOpen by remember { mutableStateOf(!isPreset) }
+    LaunchedEffect(isPreset) {
+        if (!isPreset) customOpen = true
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("连发频率", style = MaterialTheme.typography.bodySmall, color = TextDim)
+            Column(
+                modifier = Modifier.weight(1f).padding(end = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text("连发频率", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "低 / 中 / 高优先，其他数值自定义。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextDim,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Surface(
                 shape = RoundedCornerShape(999.dp),
                 color = color.copy(alpha = 0.20f),
                 border = BorderStroke(1.dp, color)
             ) {
                 Text(
-                    "频率 $value",
+                    "$safeValue/s",
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                     color = color,
                     fontWeight = FontWeight.Bold,
@@ -1065,20 +1335,20 @@ private fun FrequencyControl(value: Int, onChange: (Int) -> Unit) {
                 )
             }
         }
-        Slider(
-            value = value.toFloat(),
-            onValueChange = { onChange(it.toInt().coerceIn(FREQ_MIN, FREQ_MAX)) },
-            valueRange = FREQ_MIN.toFloat()..FREQ_MAX.toFloat(),
-            colors = SliderDefaults.colors(thumbColor = color, activeTrackColor = color)
-        )
+        FrequencyRail(safeValue)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FreqChip("低", 6, value, onChange)
-            FreqChip("中", 12, value, onChange)
-            FreqChip("高", 18, value, onChange)
-            OutlinedButton(onClick = { customOpen = !customOpen }) { Text("自定义") }
+            FreqChip("低", FREQ_LOW_VALUE, safeValue, Modifier.weight(1f), onChange)
+            FreqChip("中", FREQ_MID_VALUE, safeValue, Modifier.weight(1f), onChange)
+            FreqChip("高", FREQ_HIGH_VALUE, safeValue, Modifier.weight(1f), onChange)
+        }
+        OutlinedButton(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { customOpen = !customOpen }
+        ) {
+            Text(if (customOpen) "收起自定义" else "自定义")
         }
         AnimatedVisibility(visible = customOpen) {
-            NumberField("自定义频率（$FREQ_MIN-$FREQ_MAX）", value, Modifier.fillMaxWidth()) {
+            NumberField("自定义（$FREQ_MIN-$FREQ_MAX/s）", value, Modifier.fillMaxWidth()) {
                 onChange(it.coerceIn(FREQ_MIN, FREQ_MAX))
             }
         }
@@ -1087,12 +1357,91 @@ private fun FrequencyControl(value: Int, onChange: (Int) -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FreqChip(label: String, freq: Int, current: Int, onChange: (Int) -> Unit) {
+private fun FreqChip(label: String, freq: Int, current: Int, modifier: Modifier = Modifier, onChange: (Int) -> Unit) {
     FilterChip(
+        modifier = modifier,
         selected = current == freq,
         onClick = { onChange(freq) },
-        label = { Text("$label $freq") }
+        label = { Text(label, maxLines = 1) }
     )
+}
+
+@Composable
+private fun FrequencyRail(value: Int) {
+    val color = freqColor(value)
+    val marker = frequencyPosition(value)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Canvas(modifier = Modifier.fillMaxWidth().height(30.dp)) {
+            val y = size.height / 2f
+            val start = size.width * 0.08f
+            val end = size.width * 0.92f
+            fun xAt(pos: Float): Float = start + (end - start) * pos
+            drawLine(
+                color = Color.White.copy(alpha = 0.16f),
+                start = Offset(start, y),
+                end = Offset(end, y),
+                strokeWidth = 8f,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = color.copy(alpha = 0.85f),
+                start = Offset(start, y),
+                end = Offset(xAt(marker), y),
+                strokeWidth = 8f,
+                cap = StrokeCap.Round
+            )
+            listOf(FREQ_LOW_POS, FREQ_MID_POS, FREQ_HIGH_POS).forEach { pos ->
+                drawCircle(Color.White.copy(alpha = 0.42f), radius = 5f, center = Offset(xAt(pos), y))
+            }
+            drawCircle(color, radius = 10f, center = Offset(xAt(marker), y))
+            drawCircle(Color.White.copy(alpha = 0.86f), radius = 4f, center = Offset(xAt(marker), y))
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("低", style = MaterialTheme.typography.labelSmall, color = TextDim)
+            Text("中", style = MaterialTheme.typography.labelSmall, color = TextDim)
+            Text("高", style = MaterialTheme.typography.labelSmall, color = TextDim)
+        }
+    }
+}
+
+private fun frequencyPosition(value: Int): Float {
+    val safe = value.coerceIn(FREQ_MIN, FREQ_MAX)
+    return when {
+        safe <= FREQ_LOW_VALUE -> interpolate(
+            safe,
+            FREQ_MIN,
+            FREQ_LOW_VALUE,
+            0.08f,
+            FREQ_LOW_POS
+        )
+        safe <= FREQ_MID_VALUE -> interpolate(
+            safe,
+            FREQ_LOW_VALUE,
+            FREQ_MID_VALUE,
+            FREQ_LOW_POS,
+            FREQ_MID_POS
+        )
+        safe <= FREQ_HIGH_VALUE -> interpolate(
+            safe,
+            FREQ_MID_VALUE,
+            FREQ_HIGH_VALUE,
+            FREQ_MID_POS,
+            FREQ_HIGH_POS
+        )
+        else -> interpolate(
+            safe,
+            FREQ_HIGH_VALUE,
+            FREQ_MAX,
+            FREQ_HIGH_POS,
+            FREQ_MAX_POS
+        )
+    }.coerceIn(0.08f, FREQ_MAX_POS)
+}
+
+private fun interpolate(value: Int, from: Int, to: Int, start: Float, end: Float): Float {
+    if (from == to) return end
+    val t = ((value - from).toFloat() / (to - from)).coerceIn(0f, 1f)
+    return start + (end - start) * t
 }
 
 @Composable
@@ -1110,8 +1459,15 @@ private fun orientationLabel(o: ScreenOrientation): String =
 
 private fun modeLabel(profile: AppProfile): String = when (profile.mode) {
     AppProfile.MODE_SINGLE -> "单点"
-    AppProfile.MODE_RAPID -> "连点 x${profile.rapidFire}"
+    AppProfile.MODE_RAPID -> "连发 ${profile.rapidFire.coerceIn(FREQ_MIN, FREQ_MAX)}/s"
     else -> "模式 ${profile.mode}"
+}
+
+private fun shoulderStateLabel(profile: AppProfile): String = when {
+    profile.leftEnabled && profile.rightEnabled -> "L/R 开"
+    profile.leftEnabled -> "仅 L"
+    profile.rightEnabled -> "仅 R"
+    else -> "L/R 关"
 }
 
 private fun controllerStateText(state: NativeTgkController.State): String = when (state) {
@@ -1215,7 +1571,9 @@ private fun selfTestProfile(context: Context): AppProfile {
         left = TriggerPoint(cx - 100, offScreenY),
         right = TriggerPoint(cx + 100, offScreenY),
         mode = AppProfile.MODE_SINGLE,
-        rapidFire = 1
+        rapidFire = 1,
+        leftEnabled = true,
+        rightEnabled = true
     )
 }
 
@@ -1270,6 +1628,24 @@ private fun openShizuku(context: Context) {
     } else {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/")))
     }
+}
+
+private fun startOverlayPicker(context: Context, profile: AppProfile) {
+    if (!Settings.canDrawOverlays(context)) {
+        Toast.makeText(context, "先授予悬浮窗权限，再回到这里取点", Toast.LENGTH_SHORT).show()
+        context.startActivity(
+            Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:${context.packageName}")
+            )
+        )
+        return
+    }
+    Toast.makeText(context, "拖动 L/R 后点悬浮条保存", Toast.LENGTH_SHORT).show()
+    openPackage(context, profile.packageName)
+    Handler(Looper.getMainLooper()).postDelayed({
+        OverlayPickService.show(context.applicationContext, profile.packageName)
+    }, 650L)
 }
 
 private fun openPackage(context: Context, packageName: String) {

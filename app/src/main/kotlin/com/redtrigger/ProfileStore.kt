@@ -51,10 +51,12 @@ object ProfileStore {
         if (idx >= 0) list[idx] = profile else list.add(0, profile)
         saveProfiles(context, list)
         recordRecent(context, profile.packageName)
+        refreshGuard(context)
     }
 
     fun removeProfile(context: Context, packageName: String) {
         saveProfiles(context, loadProfiles(context).filterNot { it.packageName == packageName })
+        refreshGuard(context)
     }
 
     fun setProfileEnabled(context: Context, packageName: String, enabled: Boolean) {
@@ -64,6 +66,7 @@ object ProfileStore {
                 if (it.packageName == packageName) it.copy(enabled = enabled) else it
             }
         )
+        refreshGuard(context)
     }
 
     // ---------------- master switch + service ----------------
@@ -92,11 +95,17 @@ object ProfileStore {
     fun disableTriggers(context: Context): Boolean {
         return try {
             prefs(context).edit().putBoolean(K_MASTER, false).apply()
-            NativeTgkController.disable()
-            context.stopService(Intent(context, TriggerService::class.java))
+            OverlayPickService.hide(context)
+            context.startForegroundService(
+                Intent(context, TriggerService::class.java).apply {
+                    action = TriggerService.ACTION_SHUTDOWN
+                }
+            )
             true
         } catch (e: Exception) {
             DebugLog.log("ProfileStore", "Disable failed: ${e.message}")
+            runCatching { NativeTgkController.disable() }
+            runCatching { context.stopService(Intent(context, TriggerService::class.java)) }
             false
         }
     }
@@ -111,6 +120,19 @@ object ProfileStore {
         if (packageName.isBlank()) return
         val recent = (listOf(packageName) + recentTargets(context)).distinct().take(10)
         prefs(context).edit().putString(K_RECENT, recent.joinToString("\n")).apply()
+    }
+
+    private fun refreshGuard(context: Context) {
+        if (!isMasterEnabled(context)) return
+        runCatching {
+            context.startForegroundService(
+                Intent(context, TriggerService::class.java).apply {
+                    action = TriggerService.ACTION_REFRESH
+                }
+            )
+        }.onFailure {
+            DebugLog.log("ProfileStore", "Guard refresh failed: ${it.message}")
+        }
     }
 
     fun isPackageInstalled(context: Context, packageName: String): Boolean = try {
@@ -148,7 +170,9 @@ object ProfileStore {
                 left = TriggerPoint(old.getInt("left_x", 1937), old.getInt("left_y", 490)),
                 right = TriggerPoint(old.getInt("right_x", 2144), old.getInt("right_y", 393)),
                 mode = old.getInt("mode", AppProfile.MODE_RAPID),
-                rapidFire = old.getInt("rapid_fire", 10)
+                rapidFire = old.getInt("rapid_fire", 10),
+                leftEnabled = true,
+                rightEnabled = true
             )
             p.edit().putString(K_PROFILES, AppProfile.listToJson(listOf(profile))).apply()
         }
