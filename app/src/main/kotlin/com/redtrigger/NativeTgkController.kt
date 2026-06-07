@@ -250,6 +250,7 @@ object NativeTgkController {
     fun startSelfTest(profile: AppProfile) {
         selfTestRunning = true
         connect {
+            if (!selfTestRunning) return@connect
             try {
                 prepareOwnerIfNeeded()
                 inputService?.enableNativeTgk(

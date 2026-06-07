@@ -44,4 +44,12 @@ class MainActivity : ComponentActivity() {
             NativeTgkController.stopSelfTest()
         }
     }
+
+    override fun onStop() {
+        super.onStop()
+        // 双保险：完全退到后台也确保自测已停止并释放。
+        if (NativeTgkController.selfTestRunning) {
+            NativeTgkController.stopSelfTest()
+        }
+    }
 }

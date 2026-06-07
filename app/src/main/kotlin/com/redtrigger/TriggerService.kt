@@ -44,10 +44,18 @@ class TriggerService : Service() {
         }
     }
 
-    // 事件驱动：红魔把当前前台包名写进 Settings.Global，前台一变即回调，立即切换（不等轮询间隔）。
+    @Volatile private var lastObservedForeground = ""
+
+    // 事件驱动：监听 Settings.Global（红魔把当前前台写进 red_magic_forground_pkg）。
+    // 监听 root URI + notifyForDescendants，确保一定收到该 key 的变化；前台真变了才立即评估切换。
     private val foregroundObserver = object : android.database.ContentObserver(handler) {
         override fun onChange(selfChange: Boolean) {
-            pollOnce()
+            val fg = android.provider.Settings.Global
+                .getString(contentResolver, "red_magic_forground_pkg").orEmpty()
+            if (fg.isNotBlank() && fg != "null" && fg != lastObservedForeground) {
+                lastObservedForeground = fg
+                pollOnce()
+            }
         }
     }
 
@@ -57,8 +65,8 @@ class TriggerService : Service() {
         NativeTgkController.init(this)
         runCatching {
             contentResolver.registerContentObserver(
-                android.provider.Settings.Global.getUriFor("red_magic_forground_pkg"),
-                false,
+                android.provider.Settings.Global.CONTENT_URI,
+                true,
                 foregroundObserver
             )
         }
