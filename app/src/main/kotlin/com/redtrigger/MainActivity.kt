@@ -31,7 +31,7 @@ class MainActivity : ComponentActivity() {
         
         DebugLog.log("Activity", "MainActivity created")
         
-        val triggersEnabled = TriggerManager.isTriggersEnabled(this)
+        val triggersEnabled = ProfileStore.isMasterEnabled(this)
         val shizukuOk = try {
             rikka.shizuku.Shizuku.pingBinder() &&
                 rikka.shizuku.Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED

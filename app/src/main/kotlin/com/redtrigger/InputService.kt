@@ -143,6 +143,13 @@ class InputService : IInputService.Stub() {
         call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, RIGHT_TGK, 0, -1, -1, true)
         call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, MIDDLE_TGK, 0, -1, -1, true)
         call("setGlobalKeyEnable", arrayOf(Boolean::class.javaPrimitiveType!!), false)
+        // Official clean-release primitive: fully resets TGK sub-state (mode/drive/points)
+        // instead of leaving them lingering across sessions.
+        call("releaseTgk", arrayOf<Class<*>>())
+    }
+
+    override fun releaseTgk() {
+        call("releaseTgk", arrayOf<Class<*>>())
     }
 
     override fun getNativeTgkStatus(): String {

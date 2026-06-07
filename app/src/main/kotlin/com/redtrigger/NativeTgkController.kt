@@ -136,21 +136,21 @@ object NativeTgkController {
         }
     }
 
-    fun enable(config: TriggerConfig, logResult: Boolean = true) {
+    fun enable(profile: AppProfile, logResult: Boolean = true) {
         connect {
             try {
                 prepareOwnerIfNeeded()
                 inputService?.enableNativeTgk(
-                    config.leftX,
-                    config.leftY,
-                    config.rightX,
-                    config.rightY,
-                    config.mode,
-                    config.rapidFire
+                    profile.left.x,
+                    profile.left.y,
+                    profile.right.x,
+                    profile.right.y,
+                    profile.mode,
+                    profile.rapidFire
                 )
                 refreshStatus()
                 if (logResult) {
-                    DebugLog.log("NativeTGK", "Enabled native TGK")
+                    DebugLog.log("NativeTGK", "Enabled native TGK for ${profile.packageName}")
                 }
             } catch (e: Exception) {
                 DebugLog.log("NativeTGK", "Enable failed: ${e.message}")
@@ -178,6 +178,17 @@ object NativeTgkController {
             DebugLog.log("NativeTGK", "Disabled native TGK")
         } catch (e: Exception) {
             DebugLog.log("NativeTGK", "Disable failed: ${e.message}")
+        }
+    }
+
+    /** Official clean-release primitive. Used to restore a clean state after self-test. */
+    fun releaseTgk() {
+        try {
+            inputService?.releaseTgk()
+            refreshStatus()
+            DebugLog.log("NativeTGK", "Released native TGK")
+        } catch (e: Exception) {
+            DebugLog.log("NativeTGK", "Release failed: ${e.message}")
         }
     }
 
@@ -245,14 +256,3 @@ object NativeTgkController {
         lastOwnerPrepareAt = 0L
     }
 }
-
-data class TriggerConfig(
-    val targetPackage: String = "com.tencent.tmgp.sgame",
-    val leftX: Int = 1937,
-    val leftY: Int = 490,
-    val rightX: Int = 2144,
-    val rightY: Int = 393,
-    val mode: Int = 6,
-    val rapidFire: Int = 10,
-    val pollMs: Long = 2000L
-)

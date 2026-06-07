@@ -13,6 +13,9 @@ interface IInputService {
     /** Disable RedMagic native TGK mapping. */
     void disableNativeTgk();
 
+    /** Fully release native TGK state (official clean-release primitive). */
+    void releaseTgk();
+
     /** Return current RedMagic native TGK status. */
     String getNativeTgkStatus();
 

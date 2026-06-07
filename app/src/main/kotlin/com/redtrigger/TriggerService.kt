@@ -10,11 +10,16 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 
+/**
+ * 前台守护：轮询当前前台包名，找到它对应的 enabled [AppProfile] 后按该 profile 启用肩键。
+ * 这就是 keymapper 式 per-app 行为——打开哪个已配置应用，就自动套那个应用的肩键。
+ *
+ * 守"单 writer"纪律：离开已配置应用时不主动 disable，避免在服务存活期反复与系统状态机抢全局 TGK。
+ */
 class TriggerService : Service() {
     companion object {
         private const val CHANNEL_ID = "redmagic_tgk_service"
         private const val NOTIFICATION_ID = 1
-        private const val MIN_POLL_MS = 2000L
 
         @Volatile var isRunning = false
             private set
@@ -24,15 +29,18 @@ class TriggerService : Service() {
 
         @Volatile var lastForeground = ""
             private set
+
+        @Volatile var activeProfilePackage = ""
+            private set
     }
 
     private val handler = Handler(Looper.getMainLooper())
-    private var config = TriggerConfig()
+    private var pollMs = ProfileStore.DEFAULT_POLL_MS
 
     private val tick = object : Runnable {
         override fun run() {
             pollOnce()
-            handler.postDelayed(this, config.pollMs.coerceAtLeast(MIN_POLL_MS))
+            handler.postDelayed(this, pollMs)
         }
     }
 
@@ -43,10 +51,10 @@ class TriggerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        config = TriggerManager.loadConfig(this)
-        startForeground(NOTIFICATION_ID, buildNotification("Monitoring ${config.targetPackage}"))
+        pollMs = ProfileStore.pollMs(this)
+        startForeground(NOTIFICATION_ID, buildNotification("守护已启动，等待已配置应用"))
         isRunning = true
-        DebugLog.log("Service", "Started with $config")
+        DebugLog.log("Service", "Started, pollMs=$pollMs")
         NativeTgkController.connect {
             handler.removeCallbacks(tick)
             handler.post(tick)
@@ -61,19 +69,23 @@ class TriggerService : Service() {
         }
         val foreground = NativeTgkController.foregroundPackage()
         lastForeground = foreground
-        val shouldEnable = foreground == config.targetPackage
+        val profile = ProfileStore.findEnabledProfile(this, foreground)
         when {
-            shouldEnable -> {
-                NativeTgkController.enable(config, logResult = !nativeActive)
-                if (!nativeActive) {
+            profile != null -> {
+                val firstApply = !nativeActive || activeProfilePackage != foreground
+                NativeTgkController.enable(profile, logResult = firstApply)
+                if (firstApply) {
                     nativeActive = true
-                    updateNotification("Active in ${config.targetPackage}")
+                    activeProfilePackage = foreground
+                    updateNotification("已在 ${profile.label} 启用肩键")
                 }
             }
             nativeActive -> {
+                // 离开已配置应用：守单 writer 纪律，不主动 disable。
                 nativeActive = false
-                DebugLog.log("Service", "Target left foreground; keeping native TGK state unchanged")
-                updateNotification("Waiting for ${config.targetPackage}")
+                activeProfilePackage = ""
+                DebugLog.log("Service", "Left configured app; keeping native TGK state unchanged")
+                updateNotification("等待已配置应用")
             }
         }
     }
@@ -96,7 +108,7 @@ class TriggerService : Service() {
             this, 0, intent, PendingIntent.FLAG_IMMUTABLE
         )
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("RedMagic Trigger active")
+            .setContentTitle("红魔肩键守护中")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
@@ -113,6 +125,7 @@ class TriggerService : Service() {
         handler.removeCallbacks(tick)
         NativeTgkController.stop(disableNative = false)
         nativeActive = false
+        activeProfilePackage = ""
         isRunning = false
         DebugLog.log("Service", "Destroyed; native TGK state left unchanged")
         super.onDestroy()

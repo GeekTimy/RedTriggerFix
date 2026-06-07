@@ -33,7 +33,7 @@ class BootReceiver : BroadcastReceiver() {
             DebugLog.log("Boot", "BOOT_COMPLETED received, autoEnable=$autoEnable")
 
             if (autoEnable) {
-                val success = TriggerManager.enableTriggers(it)
+                val success = ProfileStore.enableTriggers(it)
                 DebugLog.log("Boot", "Triggers re-enabled: $success")
             } else {
                 DebugLog.log("Boot", "Skipped: autoEnable=$autoEnable")
