@@ -15,6 +15,7 @@ object TriggerManager {
     private const val KEY_MODE = "mode"
     private const val KEY_FIRE = "rapid_fire"
     private const val KEY_POLL = "poll_ms"
+    private const val KEY_RECENT_TARGETS = "recent_targets"
 
     fun isTriggersEnabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -41,8 +42,8 @@ object TriggerManager {
                 .edit()
                 .putBoolean(KEY_ENABLED, false)
                 .apply()
-            context.stopService(Intent(context, TriggerService::class.java))
             NativeTgkController.disable()
+            context.stopService(Intent(context, TriggerService::class.java))
             true
         } catch (e: Exception) {
             DebugLog.log("TriggerManager", "Disable failed: ${e.message}")
@@ -60,7 +61,7 @@ object TriggerManager {
             rightY = prefs.getInt(KEY_RIGHT_Y, 393),
             mode = prefs.getInt(KEY_MODE, 6),
             rapidFire = prefs.getInt(KEY_FIRE, 10),
-            pollMs = prefs.getLong(KEY_POLL, 1000L)
+            pollMs = prefs.getLong(KEY_POLL, 2000L)
         )
     }
 
@@ -75,6 +76,28 @@ object TriggerManager {
             .putInt(KEY_MODE, config.mode)
             .putInt(KEY_FIRE, config.rapidFire)
             .putLong(KEY_POLL, config.pollMs)
+            .apply()
+    }
+
+    fun loadRecentTargets(context: Context): List<String> {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_RECENT_TARGETS, "")
+            .orEmpty()
+            .split("\n")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(10)
+    }
+
+    fun recordRecentTarget(context: Context, packageName: String) {
+        if (packageName.isBlank()) return
+        val recent = (listOf(packageName) + loadRecentTargets(context))
+            .distinct()
+            .take(10)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_RECENT_TARGETS, recent.joinToString("\n"))
             .apply()
     }
 

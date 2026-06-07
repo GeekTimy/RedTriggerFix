@@ -2,8 +2,10 @@ package com.redtrigger
 
 import android.content.ComponentName
 import android.os.IBinder
+import android.os.Process
 import android.util.Log
 import java.lang.reflect.Method
+import java.util.concurrent.TimeUnit
 
 /**
  * Shizuku UserService running as shell.
@@ -21,6 +23,12 @@ class InputService : IInputService.Stub() {
         private const val MIDDLE_TGK = 136
     }
 
+    private data class TgkInputDevice(
+        val path: String,
+        val side: String,
+        val name: String
+    )
+
     private val inputManager: Any by lazy {
         val serviceManager = Class.forName("android.os.ServiceManager")
         val binder = serviceManager
@@ -30,14 +38,55 @@ class InputService : IInputService.Stub() {
         stub.getMethod("asInterface", IBinder::class.java).invoke(null, binder)
     }
 
-    override fun grantPermission(permission: String) {
+    override fun grantPermission(packageName: String, permission: String) {
         try {
             Runtime.getRuntime()
-                .exec(arrayOf("pm", "grant", "com.redtrigger", permission))
+                .exec(arrayOf("pm", "grant", packageName, permission))
                 .waitFor()
         } catch (e: Exception) {
             Log.w(TAG, "grantPermission failed: ${e.message}")
         }
+    }
+
+    override fun prepareNativeOwner(ownerPackageName: String): String {
+        val owner = ownerPackageName.ifBlank { "com.redtriggerfix" }
+        val myPid = Process.myPid()
+        val script = """
+            CURRENT_PID="$myPid"
+            OWNER="$owner"
+
+            force_stop_if_present() {
+              package_name="${'$'}1"
+              if cmd package resolve-activity --brief "${'$'}package_name" >/dev/null 2>&1; then
+                am force-stop "${'$'}package_name" 2>/dev/null
+                echo "force-stop:${'$'}package_name"
+              fi
+            }
+
+            kill_matches() {
+              pattern="${'$'}1"
+              signal="${'$'}2"
+              label="${'$'}3"
+              ps -A -o PID,ARGS 2>/dev/null | grep -E "${'$'}pattern" | grep -v grep | while read -r pid rest; do
+                [ "${'$'}pid" = "${'$'}CURRENT_PID" ] && continue
+                kill "${'$'}signal" "${'$'}pid" 2>/dev/null
+                echo "${'$'}label:${'$'}signal:${'$'}pid:${'$'}rest"
+              done
+            }
+
+            force_stop_if_present com.redtrigger
+            kill_matches '[t]gk_native_tool_supervisor.sh' '-TERM' 'lite-supervisor'
+            kill_matches '[T]gkNativeTool auto' '-TERM' 'lite-child'
+            kill_matches 'com\.redtrigger:tgk' '-TERM' 'old-app-user-service'
+            kill_matches "${'$'}OWNER:tgk" '-TERM' 'stale-user-service'
+            sleep 0.5
+            kill_matches '[t]gk_native_tool_supervisor.sh' '-KILL' 'lite-supervisor'
+            kill_matches '[T]gkNativeTool auto' '-KILL' 'lite-child'
+            kill_matches 'com\.redtrigger:tgk' '-KILL' 'old-app-user-service'
+            kill_matches "${'$'}OWNER:tgk" '-KILL' 'stale-user-service'
+        """.trimIndent()
+        val result = runCommand("sh", "-c", script).trim()
+        return result.ifBlank { "clean" }
     }
 
     override fun enableNativeTgk(
@@ -59,6 +108,9 @@ class InputService : IInputService.Stub() {
         call("setTgkPoint", arrayOf(IntArray::class.java, IntArray::class.java, Int::class.javaPrimitiveType!!), intArrayOf(leftX, leftY), intArrayOf(-1, -1), LEFT_TGK)
         call("setTgkPoint", arrayOf(IntArray::class.java, IntArray::class.java, Int::class.javaPrimitiveType!!), intArrayOf(rightX, rightY), intArrayOf(-1, -1), RIGHT_TGK)
         call("setTgkPoint", arrayOf(IntArray::class.java, IntArray::class.java, Int::class.javaPrimitiveType!!), intArrayOf(-1, -1), intArrayOf(-1, -1), MIDDLE_TGK)
+        call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, LEFT_TGK, 0, leftX, leftY, true)
+        call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, RIGHT_TGK, 0, rightX, rightY, true)
+        call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, MIDDLE_TGK, 0, -1, -1, true)
 
         if (mode == 6) {
             call("setTgkRapidFireCount", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!), rapidFireCount, LEFT_TGK)
@@ -87,6 +139,9 @@ class InputService : IInputService.Stub() {
         call("setGameLeftKeyLinkFunction", arrayOf(Int::class.javaPrimitiveType!!), 0)
         call("setGameRightKeyLinkFunction", arrayOf(Int::class.javaPrimitiveType!!), 0)
         call("setGameMiddleKeyLinkFunction", arrayOf(Int::class.javaPrimitiveType!!), 0)
+        call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, LEFT_TGK, 0, -1, -1, true)
+        call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, RIGHT_TGK, 0, -1, -1, true)
+        call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, MIDDLE_TGK, 0, -1, -1, true)
         call("setGlobalKeyEnable", arrayOf(Boolean::class.javaPrimitiveType!!), false)
     }
 
@@ -103,6 +158,38 @@ class InputService : IInputService.Stub() {
     override fun getForegroundPackage(): String {
         val byActivity = getForegroundPackageByActivityTaskManager()
         return byActivity.ifBlank { getForegroundPackageBySettings() }
+    }
+
+    override fun getActivePackages(): String {
+        val packages = linkedSetOf<String>()
+        getForegroundPackage().takeIf { it.isNotBlank() }?.let(packages::add)
+        parsePackagesFromActivity(runCommand("dumpsys", "activity", "recents")).forEach(packages::add)
+        return packages
+            .filterNot { isLauncherOrSystemTask(it) }
+            .take(10)
+            .joinToString("\n")
+    }
+
+    override fun probeShoulderKeys(timeoutMs: Int): String {
+        val devices = findTgkInputDevices()
+        if (devices.isEmpty()) {
+            return "devices=\nleft=0\nright=0\nresult=no_tgk_input_device"
+        }
+        val sampleMs = timeoutMs.coerceIn(800, 10000)
+        val output = sampleTgkDevices(devices, sampleMs)
+        val (left, right) = countShoulderEvents(output)
+        val result = when {
+            left > 0 || right > 0 -> "event_seen"
+            output.isBlank() -> "no_event"
+            else -> "raw_seen"
+        }
+        return listOf(
+            "devices=${devices.joinToString(",") { "${it.path}:${it.side}:${it.name}" }}",
+            "left=$left",
+            "right=$right",
+            "result=$result",
+            "raw=${output.takeLast(1200).replace('\n', '|')}"
+        ).joinToString("\n")
     }
 
     private fun getForegroundPackageByActivityTaskManager(): String {
@@ -131,15 +218,174 @@ class InputService : IInputService.Stub() {
         }
     }
 
+    private fun runCommand(vararg command: String): String {
+        return try {
+            val proc = ProcessBuilder(*command)
+                .redirectErrorStream(true)
+                .start()
+            val value = proc.inputStream.bufferedReader().readText()
+            proc.waitFor(4, TimeUnit.SECONDS)
+            value
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    private fun runTimedCommand(command: List<String>, timeoutMs: Int): String {
+        return try {
+            val proc = ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .start()
+            val output = StringBuilder()
+            val reader = Thread {
+                try {
+                    proc.inputStream.bufferedReader().forEachLine { line ->
+                        output.append(line).append('\n')
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            reader.start()
+            if (!proc.waitFor(timeoutMs.toLong(), TimeUnit.MILLISECONDS)) {
+                proc.destroyForcibly()
+            }
+            reader.join(500)
+            output.toString()
+        } catch (e: Exception) {
+            "error:${e.javaClass.simpleName}:${e.message}"
+        }
+    }
+
+    private fun parsePackagesFromActivity(text: String): List<String> {
+        val packages = linkedSetOf<String>()
+        val patterns = listOf(
+            Regex("""cmp=([A-Za-z0-9_.$]+)/"""),
+            Regex("""(?:baseActivity|topActivity|realActivity|mActivityComponent)=\{?([A-Za-z0-9_.$]+)/"""),
+            Regex("""A=\d+:([A-Za-z0-9_.$]+)""")
+        )
+        text.lineSequence().forEach { line ->
+            patterns.forEach { pattern ->
+                pattern.findAll(line).forEach { match ->
+                    match.groupValues.getOrNull(1)?.let { packages += normalizePackage(it) }
+                }
+            }
+        }
+        return packages.filter { it.isNotBlank() }
+    }
+
+    private fun normalizePackage(value: String): String {
+        return value
+            .substringBefore(":")
+            .trim()
+            .takeIf { it.contains('.') && it != "android" }
+            ?: ""
+    }
+
+    private fun isLauncherOrSystemTask(packageName: String): Boolean {
+        return packageName == "com.zte.mifavor.launcher" ||
+            packageName == "com.android.systemui" ||
+            packageName == "android"
+    }
+
+    private fun findTgkInputDevices(): List<TgkInputDevice> {
+        val devices = mutableListOf<TgkInputDevice>()
+        var currentDevice = ""
+        var currentName = ""
+        var currentKeys = StringBuilder()
+
+        fun flushDevice() {
+            if (currentDevice.isBlank()) return
+            val haystack = "$currentName $currentKeys".lowercase()
+            val side = when {
+                haystack.contains("sar0") || haystack.contains("key_f7") -> "left"
+                haystack.contains("sar1") || haystack.contains("key_f8") -> "right"
+                else -> "unknown"
+            }
+            val isTgk = haystack.contains("nubia_tgk") ||
+                haystack.contains("key_f7") ||
+                haystack.contains("key_f8")
+            if (isTgk && side != "unknown") {
+                devices += TgkInputDevice(currentDevice, side, currentName.ifBlank { "tgk" })
+            }
+        }
+
+        runCommand("getevent", "-p").lineSequence().forEach { line ->
+            val addMatch = Regex("""add device \d+: (/dev/input/event\d+)""").find(line)
+            if (addMatch != null) {
+                flushDevice()
+                currentDevice = addMatch.groupValues[1]
+                currentName = ""
+                currentKeys = StringBuilder()
+                return@forEach
+            }
+            val nameMatch = Regex("name:\\s+\"([^\"]+)\"").find(line)
+            if (nameMatch != null) {
+                currentName = nameMatch.groupValues[1]
+            }
+            if (
+                line.contains("nubia_tgk", ignoreCase = true) ||
+                line.contains("KEY_F", ignoreCase = true)
+            ) {
+                currentKeys.append(line).append(' ')
+            }
+        }
+        flushDevice()
+        return devices.distinctBy { it.path }
+    }
+
+    private fun sampleTgkDevices(devices: List<TgkInputDevice>, timeoutMs: Int): String {
+        val seconds = maxOf(1, (timeoutMs + 999) / 1000)
+        val script = buildString {
+            devices.forEach { device ->
+                append("(timeout ")
+                append(seconds)
+                append(" getevent -lt ")
+                append(device.path)
+                append(" 2>&1 | sed 's#^#side=")
+                append(device.side)
+                append(" device=")
+                append(device.path)
+                append(" #') &\n")
+            }
+            append("wait\n")
+        }
+        return runTimedCommand(listOf("sh", "-c", script), timeoutMs + 1500)
+    }
+
+    private fun countShoulderEvents(output: String): Pair<Int, Int> {
+        val hexF7 = Regex("""\b0041\b""")
+        val hexF8 = Regex("""\b0042\b""")
+        val evKey = Regex("""\b0001\b""")
+        val evAbs = Regex("""\b0003\b""")
+        val absTgk = Regex("""\b0019\b""")
+        val downValue = Regex("""\b00000001\b""")
+        var left = 0
+        var right = 0
+        output.lineSequence().forEach { line ->
+            val isKeyDown = (line.contains(" DOWN") || downValue.containsMatchIn(line)) &&
+                (line.contains("EV_KEY") || line.contains("KEY_") || evKey.containsMatchIn(line))
+            val isAbsTgk = (line.contains("EV_ABS") || evAbs.containsMatchIn(line)) &&
+                (line.contains("ABS_DISTANCE") || absTgk.containsMatchIn(line))
+            if (!isKeyDown && !isAbsTgk) return@forEach
+            val value = line.trim().substringAfterLast(' ')
+            val absPressed = isAbsTgk && value != "00000000" && value != "ffffffff"
+            if (!isKeyDown && !absPressed) return@forEach
+            when {
+                line.contains("side=left") || line.contains("KEY_F7") || hexF7.containsMatchIn(line) -> left++
+                line.contains("side=right") || line.contains("KEY_F8") || hexF8.containsMatchIn(line) -> right++
+            }
+        }
+        return left to right
+    }
+
     override fun destroy() {
-        disableNativeTgk()
+        Log.i(TAG, "destroy")
     }
 
     private fun call(name: String, types: Array<Class<*>>, vararg args: Any) {
         try {
             val method: Method = inputManager.javaClass.getMethod(name, *types)
             method.invoke(inputManager, *args)
-            Log.i(TAG, "OK $name")
         } catch (e: Exception) {
             Log.w(TAG, "Failed $name: ${e.message}", e)
         }

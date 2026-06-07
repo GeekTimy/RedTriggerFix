@@ -3,12 +3,16 @@ package com.redtrigger
 import android.content.ComponentName
 import android.content.Context
 import android.content.ServiceConnection
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.SystemClock
 import rikka.shizuku.Shizuku
 import java.util.concurrent.CopyOnWriteArrayList
 
 object NativeTgkController {
     enum class State { STOPPED, CONNECTING, CONNECTED }
+    enum class ShizukuState { NOT_RUNNING, UNAUTHORIZED, AUTHORIZED, CONNECTING, CONNECTED }
 
     @Volatile var state: State = State.STOPPED
         private set
@@ -22,14 +26,21 @@ object NativeTgkController {
     private var inputService: IInputService? = null
     private var appContext: Context? = null
     private val pendingReady = CopyOnWriteArrayList<() -> Unit>()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile private var lastOwnerPrepareAt = 0L
 
-    private val userServiceArgs = Shizuku.UserServiceArgs(
-        ComponentName("com.redtrigger", InputService::class.java.name)
-    )
-        .daemon(false)
-        .processNameSuffix("tgk")
-        .debuggable(true)
-        .version(2)
+    private const val OWNER_PREPARE_MIN_INTERVAL_MS = 15_000L
+
+    private fun userServiceArgs(): Shizuku.UserServiceArgs {
+        val packageName = appContext?.packageName ?: "com.redtriggerfix"
+        return Shizuku.UserServiceArgs(
+            ComponentName(packageName, InputService::class.java.name)
+        )
+            .daemon(false)
+            .processNameSuffix("tgk")
+            .debuggable(true)
+            .version(5)
+    }
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -37,10 +48,14 @@ object NativeTgkController {
             state = State.CONNECTED
             DebugLog.log("NativeTGK", "Shizuku UserService connected")
             try {
-                inputService?.grantPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+                inputService?.grantPermission(
+                    appContext?.packageName ?: "com.redtriggerfix",
+                    android.Manifest.permission.WRITE_SECURE_SETTINGS
+                )
             } catch (e: Exception) {
                 DebugLog.log("NativeTGK", "Grant failed: ${e.message}")
             }
+            prepareOwnerIfNeeded(force = true)
             val callbacks = pendingReady.toList()
             pendingReady.clear()
             callbacks.forEach { it.invoke() }
@@ -58,16 +73,36 @@ object NativeTgkController {
     }
 
     fun hasShizukuPermission(): Boolean {
+        return when (shizukuState()) {
+            ShizukuState.AUTHORIZED,
+            ShizukuState.CONNECTING,
+            ShizukuState.CONNECTED -> true
+            ShizukuState.NOT_RUNNING,
+            ShizukuState.UNAUTHORIZED -> false
+        }
+    }
+
+    fun shizukuState(): ShizukuState {
         return try {
-            Shizuku.pingBinder() &&
-                Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED
+            when {
+                !Shizuku.pingBinder() -> ShizukuState.NOT_RUNNING
+                Shizuku.checkSelfPermission() != android.content.pm.PackageManager.PERMISSION_GRANTED ->
+                    ShizukuState.UNAUTHORIZED
+                state == State.CONNECTED -> ShizukuState.CONNECTED
+                state == State.CONNECTING -> ShizukuState.CONNECTING
+                else -> ShizukuState.AUTHORIZED
+            }
         } catch (_: Exception) {
-            false
+            ShizukuState.NOT_RUNNING
         }
     }
 
     fun requestPermission() {
         try {
+            if (!Shizuku.pingBinder()) {
+                DebugLog.log("NativeTGK", "Shizuku is not running")
+                return
+            }
             Shizuku.requestPermission(1001)
         } catch (e: Exception) {
             DebugLog.log("NativeTGK", "Request Shizuku permission failed: ${e.message}")
@@ -94,7 +129,7 @@ object NativeTgkController {
                 requestPermission()
                 return
             }
-            Shizuku.bindUserService(userServiceArgs, connection)
+            Shizuku.bindUserService(userServiceArgs(), connection)
         } catch (e: Exception) {
             state = State.STOPPED
             DebugLog.log("NativeTGK", "Bind failed: ${e.javaClass.simpleName}: ${e.message}")
@@ -104,6 +139,7 @@ object NativeTgkController {
     fun enable(config: TriggerConfig, logResult: Boolean = true) {
         connect {
             try {
+                prepareOwnerIfNeeded()
                 inputService?.enableNativeTgk(
                     config.leftX,
                     config.leftY,
@@ -119,6 +155,19 @@ object NativeTgkController {
             } catch (e: Exception) {
                 DebugLog.log("NativeTGK", "Enable failed: ${e.message}")
             }
+        }
+    }
+
+    private fun prepareOwnerIfNeeded(force: Boolean = false) {
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - lastOwnerPrepareAt < OWNER_PREPARE_MIN_INTERVAL_MS) return
+        lastOwnerPrepareAt = now
+        try {
+            val owner = appContext?.packageName ?: "com.redtriggerfix"
+            val report = inputService?.prepareNativeOwner(owner).orEmpty()
+            DebugLog.log("NativeTGK", "Prepared native owner: ${report.take(500)}")
+        } catch (e: Exception) {
+            DebugLog.log("NativeTGK", "Prepare owner failed: ${e.message}")
         }
     }
 
@@ -150,14 +199,50 @@ object NativeTgkController {
         return lastForegroundPackage
     }
 
-    fun stop() {
-        disable()
+    fun refreshActivePackages(onResult: (List<String>) -> Unit) {
+        connect {
+            Thread {
+                val packages = try {
+                    inputService?.getActivePackages()
+                        ?.lineSequence()
+                        ?.map { it.trim() }
+                        ?.filter { it.isNotBlank() }
+                        ?.distinct()
+                        ?.toList()
+                        .orEmpty()
+                } catch (e: Exception) {
+                    DebugLog.log("NativeTGK", "Active packages failed: ${e.message}")
+                    emptyList()
+                }
+                mainHandler.post { onResult(packages) }
+            }.start()
+        }
+    }
+
+    fun probeShoulderKeys(timeoutMs: Int, onResult: (String) -> Unit) {
+        connect {
+            Thread {
+                val result = try {
+                    inputService?.probeShoulderKeys(timeoutMs) ?: "result=not_connected\nleft=0\nright=0"
+                } catch (e: Exception) {
+                    "result=error\nleft=0\nright=0\nraw=${e.message.orEmpty()}"
+                }
+                mainHandler.post { onResult(result) }
+            }.start()
+        }
+    }
+
+    fun stop(disableNative: Boolean = true) {
+        if (disableNative) {
+            disable()
+        }
         try {
-            Shizuku.unbindUserService(userServiceArgs, connection, true)
+            Shizuku.unbindUserService(userServiceArgs(), connection, true)
         } catch (_: Exception) {
         }
         inputService = null
         state = State.STOPPED
+        lastOwnerPrepareAt = 0L
     }
 }
 
@@ -169,5 +254,5 @@ data class TriggerConfig(
     val rightY: Int = 393,
     val mode: Int = 6,
     val rapidFire: Int = 10,
-    val pollMs: Long = 1000L
+    val pollMs: Long = 2000L
 )

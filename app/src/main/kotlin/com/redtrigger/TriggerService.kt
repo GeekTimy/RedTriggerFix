@@ -14,6 +14,7 @@ class TriggerService : Service() {
     companion object {
         private const val CHANNEL_ID = "redmagic_tgk_service"
         private const val NOTIFICATION_ID = 1
+        private const val MIN_POLL_MS = 2000L
 
         @Volatile var isRunning = false
             private set
@@ -31,7 +32,7 @@ class TriggerService : Service() {
     private val tick = object : Runnable {
         override fun run() {
             pollOnce()
-            handler.postDelayed(this, config.pollMs)
+            handler.postDelayed(this, config.pollMs.coerceAtLeast(MIN_POLL_MS))
         }
     }
 
@@ -70,8 +71,8 @@ class TriggerService : Service() {
                 }
             }
             nativeActive -> {
-                NativeTgkController.disable()
                 nativeActive = false
+                DebugLog.log("Service", "Target left foreground; keeping native TGK state unchanged")
                 updateNotification("Waiting for ${config.targetPackage}")
             }
         }
@@ -110,10 +111,10 @@ class TriggerService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(tick)
-        NativeTgkController.disable()
+        NativeTgkController.stop(disableNative = false)
         nativeActive = false
         isRunning = false
-        DebugLog.log("Service", "Destroyed")
+        DebugLog.log("Service", "Destroyed; native TGK state left unchanged")
         super.onDestroy()
     }
 

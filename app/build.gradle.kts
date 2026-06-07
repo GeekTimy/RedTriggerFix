@@ -8,11 +8,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.redtrigger"
+        applicationId = "com.redtriggerfix"
         minSdk = 29
         targetSdk = 35
-        versionCode = 46
-        versionName = "3.0.10"
+        versionCode = 1
+        versionName = "0.1.0"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -51,7 +51,7 @@ android {
         val variant = this
         outputs.all {
             val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
-            output.outputFileName = "RedTrigger-v${variant.versionName}.apk"
+            output.outputFileName = "RedTriggerFix-v${variant.versionName}.apk"
         }
     }
 

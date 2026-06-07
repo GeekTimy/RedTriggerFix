@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "RedTrigger"
+rootProject.name = "RedTriggerFix"
 include(":app")

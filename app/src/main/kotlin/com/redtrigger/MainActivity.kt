@@ -1,6 +1,8 @@
 package com.redtrigger
 
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -11,6 +13,18 @@ import com.redtrigger.ui.MainScreen
 import com.redtrigger.ui.theme.RedTriggerTheme
 
 class MainActivity : ComponentActivity() {
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (TriggerInputMonitor.record(event)) {
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        TriggerInputMonitor.recordTouch(ev)
+        return super.dispatchTouchEvent(ev)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

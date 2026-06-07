@@ -1,4 +1,4 @@
-# RedTrigger justfile
+# RedTriggerFix justfile
 # Usage: just build, just ship, just copy, just version, just bump-patch, just bump-minor
 
 android_home := env("ANDROID_HOME", env("HOME", "") / "android-sdk")
@@ -16,9 +16,9 @@ apk_path := justfile_directory() / "app/build/outputs/apk/debug"
 
 # Copy APK to shared storage
 copy: build
-    @APK=$(find {{apk_path}} -name "RedTrigger-*.apk" | head -1) && \
-    cp "$APK" {{storage}}/redtrigger-debug.apk && \
-    echo "Copied to {{storage}}/redtrigger-debug.apk ($(du -h {{storage}}/redtrigger-debug.apk | cut -f1))"
+    @APK=$(find {{apk_path}} -name "RedTriggerFix-*.apk" | head -1) && \
+    cp "$APK" {{storage}}/redtriggerfix-debug.apk && \
+    echo "Copied to {{storage}}/redtriggerfix-debug.apk ($(du -h {{storage}}/redtriggerfix-debug.apk | cut -f1))"
 
 # Build + copy + print version
 ship: copy
