@@ -71,7 +71,6 @@ import com.redtrigger.ScreenOrientation
 import com.redtrigger.TriggerPoint
 import com.redtrigger.TriggerService
 import kotlinx.coroutines.delay
-import kotlin.random.Random
 
 private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
 
@@ -517,7 +516,7 @@ private fun ProfileEditor(profile: AppProfile, onChange: (AppProfile) -> Unit) {
         OutlinedButton(onClick = {
             val (l, r) = defaultPointsFor(profile.orientation, ctx)
             onChange(profile.copy(left = l, right = r))
-        }) { Text("随机生成坐标（屏幕中部）") }
+        }) { Text("重置为默认坐标") }
         Text(
             text = "提示：坐标是“${orientationLabel(profile.orientation)}下的屏幕像素”。用系统截图找按钮位置，或先用自测确认肩键命中。",
             style = MaterialTheme.typography.labelSmall,
@@ -1104,19 +1103,22 @@ private fun physicalEdges(context: Context): Pair<Int, Int> {
 }
 
 /** 给新 profile 一个一定落在屏内的初始坐标（中心偏右），用户再按需微调。 */
-/** 给新 profile 一个落在屏内中部、左右略分开的随机初始坐标，便于先验证再微调（取点页面以后做）。 */
+/**
+ * 默认坐标（按屏幕方向给合理初始位置，专门取点页面以后做）：
+ * 竖屏：左右键水平分布、垂直居中 —— L(W/4,H/2) R(3W/4,H/2)，W=短边 H=长边。
+ * 横屏：左右键垂直分布、水平居中 —— L(W/2,H/4) R(W/2,3H/4)，W=长边 H=短边。
+ */
 private fun defaultPointsFor(orientation: ScreenOrientation, context: Context): Pair<TriggerPoint, TriggerPoint> {
     val (longEdge, shortEdge) = physicalEdges(context)
-    val w = if (orientation == ScreenOrientation.LANDSCAPE) longEdge else shortEdge
-    val h = if (orientation == ScreenOrientation.LANDSCAPE) shortEdge else longEdge
-    fun near(centerFrac: Double, dim: Int): Int {
-        val c = (dim * centerFrac).toInt()
-        val span = (dim * 0.08).toInt().coerceAtLeast(1)
-        return (c + Random.nextInt(-span, span + 1)).coerceIn(0, dim)
+    return if (orientation == ScreenOrientation.LANDSCAPE) {
+        val w = longEdge
+        val h = shortEdge
+        TriggerPoint(w / 2, h / 4) to TriggerPoint(w / 2, h * 3 / 4)
+    } else {
+        val w = shortEdge
+        val h = longEdge
+        TriggerPoint(w / 4, h / 2) to TriggerPoint(w * 3 / 4, h / 2)
     }
-    val left = TriggerPoint(near(0.40, w), near(0.50, h))
-    val right = TriggerPoint(near(0.60, w), near(0.50, h))
-    return left to right
 }
 
 /** 自测用的临时 profile：本 app（竖屏），左右映射到窗口内不同高度的合法点。 */
