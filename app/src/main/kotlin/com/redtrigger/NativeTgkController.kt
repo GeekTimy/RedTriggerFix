@@ -149,7 +149,9 @@ object NativeTgkController {
                     profile.right.x,
                     profile.right.y,
                     profile.mode,
-                    profile.rapidFire
+                    profile.rapidFire,
+                    profile.leftEnabled,
+                    profile.rightEnabled
                 )
                 refreshStatus()
                 if (logResult) {
@@ -256,7 +258,8 @@ object NativeTgkController {
                 inputService?.enableNativeTgk(
                     profile.left.x, profile.left.y,
                     profile.right.x, profile.right.y,
-                    profile.mode, profile.rapidFire
+                    profile.mode, profile.rapidFire,
+                    profile.leftEnabled, profile.rightEnabled
                 )
                 inputService?.startShoulderProbe()
                 refreshStatus()

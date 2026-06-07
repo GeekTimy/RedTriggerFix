@@ -29,7 +29,9 @@ data class AppProfile(
     val left: TriggerPoint,
     val right: TriggerPoint,
     val mode: Int = MODE_RAPID,
-    val rapidFire: Int = 10
+    val rapidFire: Int = 10,
+    val leftEnabled: Boolean = true,
+    val rightEnabled: Boolean = true
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put(K_PKG, packageName)
@@ -39,6 +41,7 @@ data class AppProfile(
         put(K_LX, left.x); put(K_LY, left.y)
         put(K_RX, right.x); put(K_RY, right.y)
         put(K_MODE, mode); put(K_FIRE, rapidFire)
+        put(K_LEN, leftEnabled); put(K_REN, rightEnabled)
     }
 
     companion object {
@@ -55,6 +58,8 @@ data class AppProfile(
         private const val K_RY = "ry"
         private const val K_MODE = "mode"
         private const val K_FIRE = "fire"
+        private const val K_LEN = "lEn"
+        private const val K_REN = "rEn"
 
         fun fromJson(o: JSONObject): AppProfile = AppProfile(
             packageName = o.getString(K_PKG),
@@ -66,7 +71,9 @@ data class AppProfile(
             left = TriggerPoint(o.optInt(K_LX, -1), o.optInt(K_LY, -1)),
             right = TriggerPoint(o.optInt(K_RX, -1), o.optInt(K_RY, -1)),
             mode = o.optInt(K_MODE, MODE_RAPID),
-            rapidFire = o.optInt(K_FIRE, 10)
+            rapidFire = o.optInt(K_FIRE, 10),
+            leftEnabled = o.optBoolean(K_LEN, true),
+            rightEnabled = o.optBoolean(K_REN, true)
         )
 
         fun listToJson(profiles: List<AppProfile>): String {

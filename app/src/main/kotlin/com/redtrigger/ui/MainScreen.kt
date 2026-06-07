@@ -41,6 +41,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -496,8 +498,21 @@ private fun ProfileEditor(profile: AppProfile, onChange: (AppProfile) -> Unit) {
             )
             FilterChip(
                 selected = profile.mode == AppProfile.MODE_RAPID,
-                onClick = { onChange(profile.copy(mode = AppProfile.MODE_RAPID, rapidFire = profile.rapidFire.coerceAtLeast(10))) },
-                label = { Text("连点 x${profile.rapidFire}") }
+                onClick = { onChange(profile.copy(mode = AppProfile.MODE_RAPID, rapidFire = profile.rapidFire.coerceIn(FREQ_MIN, FREQ_MAX))) },
+                label = { Text("连点") }
+            )
+        }
+        Text("启用哪侧肩键（关闭即禁用该侧，不激活）", style = MaterialTheme.typography.bodySmall, color = TextDim)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            FilterChip(
+                selected = profile.leftEnabled,
+                onClick = { onChange(profile.copy(leftEnabled = !profile.leftEnabled)) },
+                label = { Text(if (profile.leftEnabled) "左肩键 开" else "左肩键 禁用") }
+            )
+            FilterChip(
+                selected = profile.rightEnabled,
+                onClick = { onChange(profile.copy(rightEnabled = !profile.rightEnabled)) },
+                label = { Text(if (profile.rightEnabled) "右肩键 开" else "右肩键 禁用") }
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -509,9 +524,7 @@ private fun ProfileEditor(profile: AppProfile, onChange: (AppProfile) -> Unit) {
             NumberField("右 Y", profile.right.y, Modifier.weight(1f)) { onChange(profile.copy(right = profile.right.copy(y = it))) }
         }
         if (profile.mode == AppProfile.MODE_RAPID) {
-            NumberField("连发次数", profile.rapidFire, Modifier.fillMaxWidth()) {
-                onChange(profile.copy(rapidFire = it.coerceAtLeast(1)))
-            }
+            FrequencyControl(profile.rapidFire) { onChange(profile.copy(rapidFire = it)) }
         }
         OutlinedButton(onClick = {
             val (l, r) = defaultPointsFor(profile.orientation, ctx)
@@ -1012,6 +1025,73 @@ private fun NumberField(label: String, value: Int, modifier: Modifier = Modifier
         label = { Text(label) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         singleLine = true
+    )
+}
+
+private const val FREQ_MIN = 3
+private const val FREQ_MAX = 20
+private val FreqLow = Color(0xFF2B72FF)
+private val FreqHigh = Color(0xFFFF8A00)
+
+/** 频率值 → 颜色：蓝(低)→橙(高)，按 [FREQ_MIN,FREQ_MAX] 过渡。 */
+private fun freqColor(value: Int): Color {
+    val f = ((value - FREQ_MIN).toFloat() / (FREQ_MAX - FREQ_MIN)).coerceIn(0f, 1f)
+    return androidx.compose.ui.graphics.lerp(FreqLow, FreqHigh, f)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FrequencyControl(value: Int, onChange: (Int) -> Unit) {
+    val color = freqColor(value)
+    var customOpen by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("连发频率", style = MaterialTheme.typography.bodySmall, color = TextDim)
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = color.copy(alpha = 0.20f),
+                border = BorderStroke(1.dp, color)
+            ) {
+                Text(
+                    "频率 $value",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    color = color,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+        Slider(
+            value = value.toFloat(),
+            onValueChange = { onChange(it.toInt().coerceIn(FREQ_MIN, FREQ_MAX)) },
+            valueRange = FREQ_MIN.toFloat()..FREQ_MAX.toFloat(),
+            colors = SliderDefaults.colors(thumbColor = color, activeTrackColor = color)
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FreqChip("低", 6, value, onChange)
+            FreqChip("中", 12, value, onChange)
+            FreqChip("高", 18, value, onChange)
+            OutlinedButton(onClick = { customOpen = !customOpen }) { Text("自定义") }
+        }
+        AnimatedVisibility(visible = customOpen) {
+            NumberField("自定义频率（$FREQ_MIN-$FREQ_MAX）", value, Modifier.fillMaxWidth()) {
+                onChange(it.coerceIn(FREQ_MIN, FREQ_MAX))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FreqChip(label: String, freq: Int, current: Int, onChange: (Int) -> Unit) {
+    FilterChip(
+        selected = current == freq,
+        onClick = { onChange(freq) },
+        label = { Text("$label $freq") }
     )
 }
 

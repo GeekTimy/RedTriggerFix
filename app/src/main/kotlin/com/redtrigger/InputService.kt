@@ -102,21 +102,29 @@ class InputService : IInputService.Stub() {
         rightX: Int,
         rightY: Int,
         mode: Int,
-        rapidFireCount: Int
+        rapidFireCount: Int,
+        leftEnabled: Boolean,
+        rightEnabled: Boolean
     ) {
+        // 被禁用的一侧：点位设为 (-1,-1) 且关闭该侧 drive/keyEnable，等于不激活。
+        val lx = if (leftEnabled) leftX else -1
+        val ly = if (leftEnabled) leftY else -1
+        val rx = if (rightEnabled) rightX else -1
+        val ry = if (rightEnabled) rightY else -1
+
         call("setGameLeftKeyLinkFunction", arrayOf(Int::class.javaPrimitiveType!!), 0)
         call("setGameRightKeyLinkFunction", arrayOf(Int::class.javaPrimitiveType!!), 0)
         call("setGameMiddleKeyLinkFunction", arrayOf(Int::class.javaPrimitiveType!!), 0)
         call("setGlobalKeyEnable", arrayOf(Boolean::class.javaPrimitiveType!!), true)
         call("enableTgkDrive", arrayOf(Boolean::class.javaPrimitiveType!!), true)
-        call("enableLeftTgkDrive", arrayOf(Boolean::class.javaPrimitiveType!!), true)
-        call("enableRightTgkDrive", arrayOf(Boolean::class.javaPrimitiveType!!), true)
+        call("enableLeftTgkDrive", arrayOf(Boolean::class.javaPrimitiveType!!), leftEnabled)
+        call("enableRightTgkDrive", arrayOf(Boolean::class.javaPrimitiveType!!), rightEnabled)
 
-        call("setTgkPoint", arrayOf(IntArray::class.java, IntArray::class.java, Int::class.javaPrimitiveType!!), intArrayOf(leftX, leftY), intArrayOf(-1, -1), LEFT_TGK)
-        call("setTgkPoint", arrayOf(IntArray::class.java, IntArray::class.java, Int::class.javaPrimitiveType!!), intArrayOf(rightX, rightY), intArrayOf(-1, -1), RIGHT_TGK)
+        call("setTgkPoint", arrayOf(IntArray::class.java, IntArray::class.java, Int::class.javaPrimitiveType!!), intArrayOf(lx, ly), intArrayOf(-1, -1), LEFT_TGK)
+        call("setTgkPoint", arrayOf(IntArray::class.java, IntArray::class.java, Int::class.javaPrimitiveType!!), intArrayOf(rx, ry), intArrayOf(-1, -1), RIGHT_TGK)
         call("setTgkPoint", arrayOf(IntArray::class.java, IntArray::class.java, Int::class.javaPrimitiveType!!), intArrayOf(-1, -1), intArrayOf(-1, -1), MIDDLE_TGK)
-        call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, LEFT_TGK, 0, leftX, leftY, true)
-        call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, RIGHT_TGK, 0, rightX, rightY, true)
+        call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, LEFT_TGK, 0, lx, ly, true)
+        call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, RIGHT_TGK, 0, rx, ry, true)
         call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, MIDDLE_TGK, 0, -1, -1, true)
 
         if (mode == 6) {
@@ -127,8 +135,8 @@ class InputService : IInputService.Stub() {
         call("setTgkMode", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!), mode, RIGHT_TGK)
         call("setTgkSensitivity", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!), 2, LEFT_TGK)
         call("setTgkSensitivity", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!), 2, RIGHT_TGK)
-        call("setLeftGameKeyEnable", arrayOf(Boolean::class.javaPrimitiveType!!), true)
-        call("setRightGameKeyEnable", arrayOf(Boolean::class.javaPrimitiveType!!), true)
+        call("setLeftGameKeyEnable", arrayOf(Boolean::class.javaPrimitiveType!!), leftEnabled)
+        call("setRightGameKeyEnable", arrayOf(Boolean::class.javaPrimitiveType!!), rightEnabled)
         call("setMiddleGameKeyEnable", arrayOf(Boolean::class.javaPrimitiveType!!), false)
         call("setTouchHapticFeedbackEnable", arrayOf(Boolean::class.javaPrimitiveType!!), true)
         call("setTgkTopEffectEnable", arrayOf(Boolean::class.javaPrimitiveType!!), false)

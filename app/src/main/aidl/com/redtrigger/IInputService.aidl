@@ -8,7 +8,7 @@ interface IInputService {
     String prepareNativeOwner(String ownerPackageName);
 
     /** Enable RedMagic native TGK mapping. */
-    void enableNativeTgk(int leftX, int leftY, int rightX, int rightY, int mode, int rapidFireCount);
+    void enableNativeTgk(int leftX, int leftY, int rightX, int rightY, int mode, int rapidFireCount, boolean leftEnabled, boolean rightEnabled);
 
     /** Disable RedMagic native TGK mapping. */
     void disableNativeTgk();
