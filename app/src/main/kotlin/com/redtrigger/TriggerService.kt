@@ -44,10 +44,24 @@ class TriggerService : Service() {
         }
     }
 
+    // 事件驱动：红魔把当前前台包名写进 Settings.Global，前台一变即回调，立即切换（不等轮询间隔）。
+    private val foregroundObserver = object : android.database.ContentObserver(handler) {
+        override fun onChange(selfChange: Boolean) {
+            pollOnce()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         NativeTgkController.init(this)
+        runCatching {
+            contentResolver.registerContentObserver(
+                android.provider.Settings.Global.getUriFor("red_magic_forground_pkg"),
+                false,
+                foregroundObserver
+            )
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -122,6 +136,7 @@ class TriggerService : Service() {
     }
 
     override fun onDestroy() {
+        runCatching { contentResolver.unregisterContentObserver(foregroundObserver) }
         handler.removeCallbacks(tick)
         NativeTgkController.stop(disableNative = false)
         nativeActive = false
