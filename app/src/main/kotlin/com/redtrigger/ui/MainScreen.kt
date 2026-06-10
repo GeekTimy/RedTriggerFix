@@ -71,6 +71,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.redtrigger.AppProfile
 import com.redtrigger.BootReceiver
+import com.redtrigger.Coords
 import com.redtrigger.NativeTgkController
 import com.redtrigger.OrientationConfig
 import com.redtrigger.OverlayPickService
@@ -245,8 +246,8 @@ fun MainContent() {
                                 packageName = pkg,
                                 label = ProfileStore.labelFor(context, pkg),
                                 enabled = true,
-                                landscape = OrientationConfig(enabled = true, left = ll, right = lr),
-                                portrait = OrientationConfig(enabled = false, left = pl, right = pr),
+                                landscape = OrientationConfig(enabled = false, left = ll, right = lr),
+                                portrait = OrientationConfig(enabled = true, left = pl, right = pr),
                                 mode = AppProfile.MODE_SINGLE,
                                 rapidFire = FREQ_MID_VALUE,
                                 leftEnabled = true,
@@ -650,14 +651,20 @@ private fun OrientationBlock(
             onChange(profile.withConfig(landscape, next))
         }
         if (cfg.enabled) {
+            val (sw, sh) = Coords.screenSize(landscape, ctx)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NumberField("左 X", cfg.left.x, Modifier.weight(1f)) { onChange(profile.withConfig(landscape, cfg.copy(left = cfg.left.copy(x = it)))) }
-                NumberField("左 Y", cfg.left.y, Modifier.weight(1f)) { onChange(profile.withConfig(landscape, cfg.copy(left = cfg.left.copy(y = it)))) }
+                NumberField("左 X", cfg.left.x, Modifier.weight(1f), max = sw - 1) { onChange(profile.withConfig(landscape, cfg.copy(left = cfg.left.copy(x = it)))) }
+                NumberField("左 Y", cfg.left.y, Modifier.weight(1f), max = sh - 1) { onChange(profile.withConfig(landscape, cfg.copy(left = cfg.left.copy(y = it)))) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NumberField("右 X", cfg.right.x, Modifier.weight(1f)) { onChange(profile.withConfig(landscape, cfg.copy(right = cfg.right.copy(x = it)))) }
-                NumberField("右 Y", cfg.right.y, Modifier.weight(1f)) { onChange(profile.withConfig(landscape, cfg.copy(right = cfg.right.copy(y = it)))) }
+                NumberField("右 X", cfg.right.x, Modifier.weight(1f), max = sw - 1) { onChange(profile.withConfig(landscape, cfg.copy(right = cfg.right.copy(x = it)))) }
+                NumberField("右 Y", cfg.right.y, Modifier.weight(1f), max = sh - 1) { onChange(profile.withConfig(landscape, cfg.copy(right = cfg.right.copy(y = it)))) }
             }
+            Text(
+                "${name}范围 · X 0–${sw - 1} · Y 0–${sh - 1}",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextDim
+            )
             OutlinedButton(onClick = {
                 val (l, r) = defaultPointsFor(orient, ctx)
                 onChange(profile.withConfig(landscape, cfg.copy(left = l, right = r)))
@@ -1275,14 +1282,29 @@ private fun StatusText(label: String, value: String) {
 }
 
 @Composable
-private fun NumberField(label: String, value: Int, modifier: Modifier = Modifier, onChange: (Int) -> Unit) {
+private fun NumberField(
+    label: String,
+    value: Int,
+    modifier: Modifier = Modifier,
+    max: Int = Int.MAX_VALUE,
+    onChange: (Int) -> Unit
+) {
+    val ctx = LocalContext.current
     var text by remember(value) { mutableStateOf(value.toString()) }
     OutlinedTextField(
         modifier = modifier,
         value = text,
-        onValueChange = {
-            text = it.filter { ch -> ch.isDigit() || ch == '-' }
-            text.toIntOrNull()?.let(onChange)
+        onValueChange = { raw ->
+            val filtered = raw.filter { ch -> ch.isDigit() } // 坐标非负
+            val n = filtered.toIntOrNull()
+            when {
+                filtered.isEmpty() -> text = "" // 允许临时清空再输入
+                n == null -> Unit
+                n in 0..max -> { text = filtered; onChange(n) } // 合法 → 接受
+                else -> Toast.makeText( // 超界 → 提示并拒绝键入，保留原值
+                    ctx, "$label 超出范围 0–$max，已保留原值", Toast.LENGTH_SHORT
+                ).show()
+            }
         },
         label = { Text(label) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
