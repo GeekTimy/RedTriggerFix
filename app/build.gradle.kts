@@ -46,6 +46,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 让 debug 版以独立包名安装，与已装的 release 版并存（不破坏其数据/Shizuku 授权）。
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = false
             if (hasReleaseSigning) {
