@@ -1542,7 +1542,7 @@ private fun physicalEdges(context: Context): Pair<Int, Int> {
 /**
  * 默认坐标（按屏幕方向给合理初始位置，专门取点页面以后做）：
  * 竖屏：左右键水平分布、垂直居中 —— L(W/4,H/2) R(3W/4,H/2)，W=短边 H=长边。
- * 横屏：左右键垂直分布、水平居中 —— L(W/2,H/4) R(W/2,3H/4)，W=长边 H=短边。
+ * 横屏：固定实测坐标 —— L(800,600) R(1700,600)。
  */
 private fun defaultPointsFor(orientation: ScreenOrientation, context: Context): Pair<TriggerPoint, TriggerPoint> {
     val (longEdge, shortEdge) = physicalEdges(context)

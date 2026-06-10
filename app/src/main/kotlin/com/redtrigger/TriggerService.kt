@@ -17,7 +17,7 @@ import android.provider.Settings
  *
  * Foreground enters a configured app -> apply that app's profile.
  * Foreground switches to another configured app -> apply the new profile.
- * Foreground leaves all configured apps -> releaseTgk() so the old mapping does not leak globally.
+ * Foreground leaves all configured apps -> disable() (native clean-release sequence) so the old mapping does not leak globally.
  */
 class TriggerService : Service() {
     companion object {
@@ -120,10 +120,12 @@ class TriggerService : Service() {
     private fun releaseIfActive(foreground: String, reason: String) {
         if (nativeActive) {
             OverlayPickService.hideMarkers(this)
-            NativeTgkController.releaseTgk()
+            // 干净释放：用原生 disable 序列，绝不用 releaseTgk —— 实测 vendor releaseTgk 是"全开"
+            // (global/left/right 全 true)，离开应用时调它正是"肩键残留"的根因。
+            NativeTgkController.disable()
             DebugLog.log(
                 "Service",
-                "Released TGK after leaving $activeProfilePackage, foreground=$foreground, reason=$reason"
+                "Disabled TGK (clean release) after leaving $activeProfilePackage, foreground=$foreground, reason=$reason"
             )
         }
         nativeActive = false

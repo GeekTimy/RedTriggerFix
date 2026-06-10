@@ -186,7 +186,10 @@ object NativeTgkController {
         }
     }
 
-    /** Official clean-release primitive. Used to restore a clean state after self-test. */
+    /**
+     * ⚠️ vendor releaseTgk 实测是"全部重新启用"(global/left/right/haptic 全变 true)，不是释放！
+     * 干净释放请用 disable()(原生 disable 序列)。此包装仅留作诊断/手动测试，正常流程勿调。
+     */
     fun releaseTgk() {
         try {
             inputService?.releaseTgk()
