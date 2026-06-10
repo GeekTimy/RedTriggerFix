@@ -762,9 +762,10 @@ private fun AddProfileMenu(
     onAdd: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var showRecent by remember { mutableStateOf(false) }
     var showAll by remember { mutableStateOf(false) }
-    val candidates = remember(existing, activePackages, showAll) {
-        addCandidates(context, existing, activePackages, showAll)
+    val candidates = remember(existing, activePackages, showRecent, showAll) {
+        addCandidates(context, existing, activePackages, showRecent, showAll)
     }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
         OutlinedTextField(
@@ -788,7 +789,8 @@ private fun AddProfileMenu(
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.labelSmall
                             )
-                            item.pkg == SHOW_ALL -> Text(item.label, color = StateBlue)
+                            item.pkg == SHOW_ALL || item.pkg == SHOW_RECENT ->
+                                Text(item.label, color = StateBlue)
                             else -> Column {
                                 Text(item.label)
                                 Text(item.pkg, style = MaterialTheme.typography.bodySmall, color = TextDim)
@@ -798,6 +800,7 @@ private fun AddProfileMenu(
                     onClick = {
                         when {
                             item.isHeader -> {}
+                            item.pkg == SHOW_RECENT -> showRecent = true
                             item.pkg == SHOW_ALL -> showAll = true
                             else -> {
                                 onAdd(item.pkg)
@@ -1530,6 +1533,7 @@ private fun statusValue(status: String, key: String): String? =
 // ----------------------------------------------------------------------------
 
 private const val SHOW_ALL = "__show_all__"
+private const val SHOW_RECENT = "__show_recent__"
 
 private fun physicalEdges(context: Context): Pair<Int, Int> {
     val dm = context.resources.displayMetrics
@@ -1582,6 +1586,7 @@ private fun addCandidates(
     context: Context,
     existing: Set<String>,
     activePackages: List<String>,
+    showRecent: Boolean,
     showAll: Boolean
 ): List<AddItem> {
     val items = mutableListOf<AddItem>()
@@ -1600,8 +1605,16 @@ private fun addCandidates(
         }
     }
 
-    section("活跃 / 前台应用", activePackages)
-    section("最近应用", ProfileStore.recentTargets(context))
+    section("前台 / 活跃应用", activePackages)
+
+    // 历史应用 = 曾在本 app 添加过的应用（含后来删除、当前不在配置里的），按最近添加顺序最多 10 个；默认折叠。
+    val recent = ProfileStore.recentTargets(context)
+    val hasRecent = recent.any { it.isNotBlank() && it != context.packageName && it !in used }
+    if (hasRecent) {
+        if (showRecent) section("历史应用", recent)
+        else items.add(AddItem("展开历史应用…", SHOW_RECENT))
+    }
+
     if (showAll) {
         section("全部应用", loadLaunchableApps(context).map { it.first })
     } else {

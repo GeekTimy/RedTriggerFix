@@ -182,11 +182,21 @@ class InputService : IInputService.Stub() {
         return byActivity.ifBlank { getForegroundPackageBySettings() }
     }
 
+    /**
+     * 「前台 / 活跃应用」候选 = 最近任务（上拉多任务界面里能看到的、前后台在跑的应用）。
+     * 只解析 `* Recent #N:` 行——它就是多任务列表本身、按最近活跃排序；绝不去解析 dump 里的
+     * 嵌套/历史/沙箱记录（历史 bug：整张 recents 全倒出 → .sdkentry、重复进程、早退出的 app 全冒出来）。
+     * 每个任务取 affinity 包名(A=) 或基础 Intent 包名(I=)，排除桌面/系统，最多 10 个。
+     */
     override fun getActivePackages(): String {
-        val packages = linkedSetOf<String>()
-        getForegroundPackage().takeIf { it.isNotBlank() }?.let(packages::add)
-        parsePackagesFromActivity(runCommand("dumpsys", "activity", "recents")).forEach(packages::add)
-        return packages
+        val byAffinity = Regex("""\bA=\d+:([A-Za-z0-9_.]+)""")
+        val byIntent = Regex("""\bI=([A-Za-z0-9_.]+)/""")
+        val pkgs = linkedSetOf<String>()
+        runCommand("dumpsys", "activity", "recents").lineSequence().forEach { line ->
+            if (!line.contains("Recent #")) return@forEach
+            (byAffinity.find(line) ?: byIntent.find(line))?.groupValues?.getOrNull(1)?.let { pkgs.add(it) }
+        }
+        return pkgs.asSequence()
             .filterNot { isLauncherOrSystemTask(it) }
             .take(10)
             .joinToString("\n")
@@ -342,31 +352,6 @@ class InputService : IInputService.Stub() {
         } catch (e: Exception) {
             "error:${e.javaClass.simpleName}:${e.message}"
         }
-    }
-
-    private fun parsePackagesFromActivity(text: String): List<String> {
-        val packages = linkedSetOf<String>()
-        val patterns = listOf(
-            Regex("""cmp=([A-Za-z0-9_.$]+)/"""),
-            Regex("""(?:baseActivity|topActivity|realActivity|mActivityComponent)=\{?([A-Za-z0-9_.$]+)/"""),
-            Regex("""A=\d+:([A-Za-z0-9_.$]+)""")
-        )
-        text.lineSequence().forEach { line ->
-            patterns.forEach { pattern ->
-                pattern.findAll(line).forEach { match ->
-                    match.groupValues.getOrNull(1)?.let { packages += normalizePackage(it) }
-                }
-            }
-        }
-        return packages.filter { it.isNotBlank() }
-    }
-
-    private fun normalizePackage(value: String): String {
-        return value
-            .substringBefore(":")
-            .trim()
-            .takeIf { it.contains('.') && it != "android" }
-            ?: ""
     }
 
     private fun isLauncherOrSystemTask(packageName: String): Boolean {
