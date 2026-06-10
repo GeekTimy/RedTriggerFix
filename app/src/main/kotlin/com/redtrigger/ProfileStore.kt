@@ -166,9 +166,12 @@ object ProfileStore {
                 packageName = oldPkg,
                 label = labelFor(context, oldPkg),
                 enabled = true,
-                orientation = ScreenOrientation.LANDSCAPE, // 旧坐标是横屏王者坐标
-                left = TriggerPoint(old.getInt("left_x", 1937), old.getInt("left_y", 490)),
-                right = TriggerPoint(old.getInt("right_x", 2144), old.getInt("right_y", 393)),
+                landscape = OrientationConfig( // 旧坐标是横屏王者坐标
+                    enabled = true,
+                    left = TriggerPoint(old.getInt("left_x", 1937), old.getInt("left_y", 490)),
+                    right = TriggerPoint(old.getInt("right_x", 2144), old.getInt("right_y", 393))
+                ),
+                portrait = OrientationConfig(),
                 mode = old.getInt("mode", AppProfile.MODE_RAPID),
                 rapidFire = old.getInt("rapid_fire", 10),
                 leftEnabled = true,

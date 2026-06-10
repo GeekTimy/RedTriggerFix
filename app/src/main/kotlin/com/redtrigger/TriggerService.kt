@@ -44,6 +44,7 @@ class TriggerService : Service() {
     @Volatile private var lastObservedForeground = ""
     @Volatile private var shuttingDown = false
     @Volatile private var shutdownCompleted = false
+    @Volatile private var lastAppliedLandscape = false
 
     private val foregroundObserver = object : ContentObserver(handler) {
         override fun onChange(selfChange: Boolean) {
@@ -106,16 +107,30 @@ class TriggerService : Service() {
     }
 
     private fun applyProfile(profile: AppProfile, foreground: String, reason: String) {
-        val profileChanged = !nativeActive || activeProfilePackage != foreground
-        if (!profileChanged && reason != "profile-refresh") return
+        val landscapeNow = isLandscapeNow()
+        val cfg = profile.configFor(landscapeNow)
+        if (!cfg.enabled) {
+            // 设备当前方向未启用肩键 -> 干净释放，不残留另一方向的映射。
+            releaseIfActive(foreground, "$reason/orientation-off")
+            return
+        }
+        val changed = !nativeActive || activeProfilePackage != foreground || lastAppliedLandscape != landscapeNow
+        if (!changed && reason != "profile-refresh") return
 
-        NativeTgkController.enable(profile, logResult = profileChanged)
+        NativeTgkController.enable(profile, landscapeNow, logResult = changed)
         updateOverlayMarkers(profile)
         nativeActive = true
         activeProfilePackage = foreground
-        DebugLog.log("Service", "Applied profile=${profile.packageName}, reason=$reason")
-        updateNotification("已在 ${profile.label} 启用肩键")
+        lastAppliedLandscape = landscapeNow
+        DebugLog.log(
+            "Service",
+            "Applied profile=${profile.packageName} (${if (landscapeNow) "landscape" else "portrait"}), reason=$reason"
+        )
+        updateNotification("已在 ${profile.label} 启用肩键（${if (landscapeNow) "横屏" else "竖屏"}）")
     }
+
+    private fun isLandscapeNow(): Boolean =
+        resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
     private fun releaseIfActive(foreground: String, reason: String) {
         if (nativeActive) {
@@ -200,6 +215,16 @@ class TriggerService : Service() {
     private fun updateNotification(text: String) {
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICATION_ID, buildNotification(text))
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // 设备旋转 -> 重新评估前台：按新方向选用对应坐标，或在该方向未启用肩键时干净释放。
+        val landscape = newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        DebugLog.log("Service", "Config changed, orientation=${if (landscape) "landscape" else "portrait"}")
+        if (isRunning && !shuttingDown) {
+            evaluateForeground("rotation")
+        }
     }
 
     override fun onDestroy() {

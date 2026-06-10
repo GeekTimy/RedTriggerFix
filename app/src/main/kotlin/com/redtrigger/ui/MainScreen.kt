@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import com.redtrigger.AppProfile
 import com.redtrigger.BootReceiver
 import com.redtrigger.NativeTgkController
+import com.redtrigger.OrientationConfig
 import com.redtrigger.OverlayPickService
 import com.redtrigger.ProfileStore
 import com.redtrigger.ScreenOrientation
@@ -236,16 +237,16 @@ fun MainContent() {
                 editingPackage = editingPackage,
                 onAdd = { pkg ->
                     if (profiles.none { it.packageName == pkg }) {
-                        val (l, r) = defaultPointsFor(ScreenOrientation.PORTRAIT, context)
+                        val (ll, lr) = defaultPointsFor(ScreenOrientation.LANDSCAPE, context)
+                        val (pl, pr) = defaultPointsFor(ScreenOrientation.PORTRAIT, context)
                         ProfileStore.upsertProfile(
                             context,
                             AppProfile(
                                 packageName = pkg,
                                 label = ProfileStore.labelFor(context, pkg),
                                 enabled = true,
-                                orientation = ScreenOrientation.PORTRAIT,
-                                left = l,
-                                right = r,
+                                landscape = OrientationConfig(enabled = true, left = ll, right = lr),
+                                portrait = OrientationConfig(enabled = false, left = pl, right = pr),
                                 mode = AppProfile.MODE_SINGLE,
                                 rapidFire = FREQ_MID_VALUE,
                                 leftEnabled = true,
@@ -482,8 +483,7 @@ private fun ProfileRow(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "${orientationLabel(profile.orientation)} · ${modeLabel(profile)} · " +
-                            "L(${profile.left.x},${profile.left.y}) R(${profile.right.x},${profile.right.y})",
+                        text = "${orientationsSummary(profile)} · ${modeLabel(profile)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextDim,
                         maxLines = 1,
@@ -514,29 +514,17 @@ private fun ProfileEditor(profile: AppProfile, onChange: (AppProfile) -> Unit, o
 
         EditorSection(
             index = "1",
-            title = "基础",
-            subtitle = "方向只影响坐标系；多数游戏保持横屏。"
+            title = "方向与坐标",
+            subtitle = "每个方向独立开关：开 = 设备处于该方向时启用肩键；坐标按该方向屏幕。"
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ChoiceTile(
-                    title = "竖屏",
-                    subtitle = "应用/竖屏游戏",
-                    selected = profile.orientation == ScreenOrientation.PORTRAIT,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        val (l, r) = defaultPointsFor(ScreenOrientation.PORTRAIT, ctx)
-                        onChange(profile.copy(orientation = ScreenOrientation.PORTRAIT, left = l, right = r))
-                    }
-                )
-                ChoiceTile(
-                    title = "横屏",
-                    subtitle = "游戏常用",
-                    selected = profile.orientation == ScreenOrientation.LANDSCAPE,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        val (l, r) = defaultPointsFor(ScreenOrientation.LANDSCAPE, ctx)
-                        onChange(profile.copy(orientation = ScreenOrientation.LANDSCAPE, left = l, right = r))
-                    }
+            OrientationBlock(profile = profile, landscape = true, onChange = onChange)
+            Divider(color = StrokeDim)
+            OrientationBlock(profile = profile, landscape = false, onChange = onChange)
+            if (!profile.anyOrientationEnabled) {
+                Text(
+                    "两个方向都未开启：进入该应用不会启用肩键。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = StateAmber
                 )
             }
         }
@@ -594,21 +582,9 @@ private fun ProfileEditor(profile: AppProfile, onChange: (AppProfile) -> Unit, o
 
         EditorSection(
             index = "3",
-            title = "坐标",
-            subtitle = "${orientationLabel(profile.orientation)}像素坐标；取点页面后续再做。"
+            title = "取点 / 标记",
+            subtitle = "悬浮取点会按手机当前方向，保存到对应方向那一套。"
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NumberField("左 X", profile.left.x, Modifier.weight(1f)) { onChange(profile.copy(left = profile.left.copy(x = it))) }
-                NumberField("左 Y", profile.left.y, Modifier.weight(1f)) { onChange(profile.copy(left = profile.left.copy(y = it))) }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NumberField("右 X", profile.right.x, Modifier.weight(1f)) { onChange(profile.copy(right = profile.right.copy(x = it))) }
-                NumberField("右 Y", profile.right.y, Modifier.weight(1f)) { onChange(profile.copy(right = profile.right.copy(y = it))) }
-            }
-            OutlinedButton(onClick = {
-                val (l, r) = defaultPointsFor(profile.orientation, ctx)
-                onChange(profile.copy(left = l, right = r))
-            }) { Text("重置为默认坐标") }
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = StateBlue),
@@ -647,9 +623,46 @@ private fun ProfileEditor(profile: AppProfile, onChange: (AppProfile) -> Unit, o
 @Composable
 private fun EditorSummary(profile: AppProfile) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        MiniStatusPill(orientationLabel(profile.orientation), StateBlue)
+        MiniStatusPill(orientationsSummary(profile), StateBlue)
         MiniStatusPill(modeLabel(profile), if (profile.mode == AppProfile.MODE_RAPID) FreqHigh else StateGreen)
         MiniStatusPill(shoulderStateLabel(profile), if (profile.leftEnabled || profile.rightEnabled) ShoulderPink else StateGray)
+    }
+}
+
+@Composable
+private fun OrientationBlock(
+    profile: AppProfile,
+    landscape: Boolean,
+    onChange: (AppProfile) -> Unit
+) {
+    val ctx = LocalContext.current
+    val cfg = profile.configFor(landscape)
+    val orient = if (landscape) ScreenOrientation.LANDSCAPE else ScreenOrientation.PORTRAIT
+    val name = if (landscape) "横屏" else "竖屏"
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ToggleLine("$name 使用肩键", cfg.enabled) { on ->
+            val next = if (on && !cfg.left.isSet && !cfg.right.isSet) {
+                val (l, r) = defaultPointsFor(orient, ctx)
+                cfg.copy(enabled = true, left = l, right = r)
+            } else {
+                cfg.copy(enabled = on)
+            }
+            onChange(profile.withConfig(landscape, next))
+        }
+        if (cfg.enabled) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumberField("左 X", cfg.left.x, Modifier.weight(1f)) { onChange(profile.withConfig(landscape, cfg.copy(left = cfg.left.copy(x = it)))) }
+                NumberField("左 Y", cfg.left.y, Modifier.weight(1f)) { onChange(profile.withConfig(landscape, cfg.copy(left = cfg.left.copy(y = it)))) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumberField("右 X", cfg.right.x, Modifier.weight(1f)) { onChange(profile.withConfig(landscape, cfg.copy(right = cfg.right.copy(x = it)))) }
+                NumberField("右 Y", cfg.right.y, Modifier.weight(1f)) { onChange(profile.withConfig(landscape, cfg.copy(right = cfg.right.copy(y = it)))) }
+            }
+            OutlinedButton(onClick = {
+                val (l, r) = defaultPointsFor(orient, ctx)
+                onChange(profile.withConfig(landscape, cfg.copy(left = l, right = r)))
+            }) { Text("重置为${name}默认坐标") }
+        }
     }
 }
 
@@ -1457,8 +1470,11 @@ private fun redSwitchColors() = SwitchDefaults.colors(
     uncheckedBorderColor = StrokeDim
 )
 
-private fun orientationLabel(o: ScreenOrientation): String =
-    if (o == ScreenOrientation.LANDSCAPE) "横屏" else "竖屏"
+private fun orientationsSummary(p: AppProfile): String {
+    val l = if (p.landscape.enabled) "横✓" else "横–"
+    val pt = if (p.portrait.enabled) "竖✓" else "竖–"
+    return "$l $pt"
+}
 
 private fun modeLabel(profile: AppProfile): String = when (profile.mode) {
     AppProfile.MODE_SINGLE -> "单点"
@@ -1570,9 +1586,11 @@ private fun selfTestProfile(context: Context): AppProfile {
         packageName = context.packageName,
         label = "自测",
         enabled = true,
-        orientation = ScreenOrientation.PORTRAIT,
-        left = TriggerPoint(cx - 100, offScreenY),
-        right = TriggerPoint(cx + 100, offScreenY),
+        portrait = OrientationConfig(
+            enabled = true,
+            left = TriggerPoint(cx - 100, offScreenY),
+            right = TriggerPoint(cx + 100, offScreenY)
+        ),
         mode = AppProfile.MODE_SINGLE,
         rapidFire = 1,
         leftEnabled = true,

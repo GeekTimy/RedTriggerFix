@@ -74,8 +74,9 @@ class OverlayPickService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         mode = if (action == ACTION_SHOW_MARKERS) Mode.RUNTIME else Mode.PICKER
         profile = loaded
-        leftPoint = loaded.left
-        rightPoint = loaded.right
+        val cfg = loaded.configFor(isLandscape())
+        leftPoint = cfg.left
+        rightPoint = cfg.right
         removeViews()
         if (mode == Mode.RUNTIME) {
             addRuntimeViews(loaded)
@@ -124,15 +125,16 @@ class OverlayPickService : Service() {
 
     private fun addRuntimeViews(profile: AppProfile) {
         val markerSize = dp(RUNTIME_MARKER_DP)
-        if (profile.leftEnabled && profile.left.isSet) {
+        val cfg = profile.configFor(isLandscape())
+        if (profile.leftEnabled && cfg.left.isSet) {
             leftMarker = createMarker("L", LEFT_MARKER_COLOR, enabled = true, markerSize = markerSize, editable = false).also { marker ->
-                leftParams = markerParams(profile.left, markerSize, touchable = false)
+                leftParams = markerParams(cfg.left, markerSize, touchable = false)
                 windowManager.addView(marker, leftParams)
             }
         }
-        if (profile.rightEnabled && profile.right.isSet) {
+        if (profile.rightEnabled && cfg.right.isSet) {
             rightMarker = createMarker("R", RIGHT_MARKER_COLOR, enabled = true, markerSize = markerSize, editable = false).also { marker ->
-                rightParams = markerParams(profile.right, markerSize, touchable = false)
+                rightParams = markerParams(cfg.right, markerSize, touchable = false)
                 windowManager.addView(marker, rightParams)
             }
         }
@@ -274,13 +276,18 @@ class OverlayPickService : Service() {
 
     private fun updateStatus() {
         val p = profile ?: return
-        statusText?.text = "${p.label} · ${if (p.orientation == ScreenOrientation.LANDSCAPE) "横屏" else "竖屏"} · " +
+        statusText?.text = "${p.label} · 正在编辑${if (isLandscape()) "横屏" else "竖屏"} · " +
             "L(${leftPoint.x},${leftPoint.y}) R(${rightPoint.x},${rightPoint.y})"
     }
 
+    private fun isLandscape(): Boolean =
+        resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
     private fun saveProfile(): AppProfile? {
         val p = profile ?: return null
-        val saved = p.copy(left = leftPoint, right = rightPoint)
+        // 取点绑定当前设备方向：写进该方向那套并启用它。
+        val cfg = OrientationConfig(enabled = true, left = leftPoint, right = rightPoint)
+        val saved = if (isLandscape()) p.copy(landscape = cfg) else p.copy(portrait = cfg)
         ProfileStore.upsertProfile(this, saved)
         return saved
     }

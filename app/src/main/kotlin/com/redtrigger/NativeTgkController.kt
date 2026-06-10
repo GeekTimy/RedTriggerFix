@@ -139,15 +139,19 @@ object NativeTgkController {
         }
     }
 
-    fun enable(profile: AppProfile, logResult: Boolean = true) {
+    fun enable(profile: AppProfile, landscapeNow: Boolean, logResult: Boolean = true) {
         connect {
             try {
                 prepareOwnerIfNeeded()
+                val ctx = appContext
+                val cfg = profile.configFor(landscapeNow)
+                // 套用前按当前方向校验/回退默认，杜绝越界注入（bug2）。
+                val (left, right) = if (ctx != null) Coords.resolve(cfg, landscapeNow, ctx) else (cfg.left to cfg.right)
                 inputService?.enableNativeTgk(
-                    profile.left.x,
-                    profile.left.y,
-                    profile.right.x,
-                    profile.right.y,
+                    left.x,
+                    left.y,
+                    right.x,
+                    right.y,
                     profile.mode,
                     profile.rapidFire,
                     profile.leftEnabled,
@@ -155,7 +159,10 @@ object NativeTgkController {
                 )
                 refreshStatus()
                 if (logResult) {
-                    DebugLog.log("NativeTGK", "Enabled native TGK for ${profile.packageName}")
+                    DebugLog.log(
+                        "NativeTGK",
+                        "Enabled native TGK for ${profile.packageName} (${if (landscapeNow) "landscape" else "portrait"}) L(${left.x},${left.y}) R(${right.x},${right.y})"
+                    )
                 }
             } catch (e: Exception) {
                 DebugLog.log("NativeTGK", "Enable failed: ${e.message}")
@@ -258,9 +265,12 @@ object NativeTgkController {
             if (!selfTestRunning) return@connect
             try {
                 prepareOwnerIfNeeded()
+                // 自测专用：直接用 portrait 配置里的（故意映射到屏外的）坐标，不经 Coords 校验/夹取，
+                // 否则屏外点会被合法化、破坏「零误触」自测设计。
+                val cfg = profile.portrait
                 inputService?.enableNativeTgk(
-                    profile.left.x, profile.left.y,
-                    profile.right.x, profile.right.y,
+                    cfg.left.x, cfg.left.y,
+                    cfg.right.x, cfg.right.y,
                     profile.mode, profile.rapidFire,
                     profile.leftEnabled, profile.rightEnabled
                 )
