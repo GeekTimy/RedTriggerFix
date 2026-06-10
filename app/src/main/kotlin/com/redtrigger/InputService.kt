@@ -158,9 +158,9 @@ class InputService : IInputService.Stub() {
         call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, RIGHT_TGK, 0, -1, -1, true)
         call("setKeyTouchPoint", arrayOf(Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Boolean::class.javaPrimitiveType!!), -1, MIDDLE_TGK, 0, -1, -1, true)
         call("setGlobalKeyEnable", arrayOf(Boolean::class.javaPrimitiveType!!), false)
-        // Official clean-release primitive: fully resets TGK sub-state (mode/drive/points)
-        // instead of leaving them lingering across sessions.
-        call("releaseTgk", arrayOf<Class<*>>())
+        // 不调 releaseTgk —— 实测 vendor releaseTgk 是"全部重新启用"(left/right/global 全 true)，
+        // 会翻转上面整套 disable。干净释放到 setGlobalKeyEnable(false) 为止
+        // (vendor 异步处理，约 1s 后稳定为全 false)。
     }
 
     override fun releaseTgk() {

@@ -275,9 +275,9 @@ object NativeTgkController {
         selfTestRunning = false
         try {
             inputService?.stopShoulderProbe()
-            inputService?.releaseTgk()
+            inputService?.disableNativeTgk()
             refreshStatus()
-            DebugLog.log("NativeTGK", "Self-test stopped & released")
+            DebugLog.log("NativeTGK", "Self-test stopped & disabled")
         } catch (e: Exception) {
             DebugLog.log("NativeTGK", "Self-test stop failed: ${e.message}")
         }

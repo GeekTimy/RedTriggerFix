@@ -1547,9 +1547,8 @@ private fun physicalEdges(context: Context): Pair<Int, Int> {
 private fun defaultPointsFor(orientation: ScreenOrientation, context: Context): Pair<TriggerPoint, TriggerPoint> {
     val (longEdge, shortEdge) = physicalEdges(context)
     return if (orientation == ScreenOrientation.LANDSCAPE) {
-        val w = longEdge
-        val h = shortEdge
-        TriggerPoint(w / 2, h / 4) to TriggerPoint(w / 2, h * 3 / 4)
+        // 横屏固定默认坐标（按实测指定）：左下 / 右下偏中
+        TriggerPoint(800, 600) to TriggerPoint(1700, 600)
     } else {
         val w = shortEdge
         val h = longEdge
