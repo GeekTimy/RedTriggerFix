@@ -2,6 +2,8 @@ package com.redtrigger
 
 import android.content.ComponentName
 import android.os.IBinder
+import android.os.Binder
+import android.os.Parcel
 import android.os.Process
 import android.util.Log
 import java.lang.reflect.Method
@@ -35,6 +37,9 @@ class InputService : IInputService.Stub() {
     @Volatile private var probeDevicesInfo = ""
     private val probeProcesses = java.util.concurrent.CopyOnWriteArrayList<java.lang.Process>()
     private val probeThreads = java.util.concurrent.CopyOnWriteArrayList<Thread>()
+    private var taskManager: Any? = null
+    private var taskListener: Any? = null
+    @Volatile private var foregroundListener: IForegroundListener? = null
 
     private val inputManager: Any by lazy {
         val serviceManager = Class.forName("android.os.ServiceManager")
@@ -145,6 +150,8 @@ class InputService : IInputService.Stub() {
     }
 
     override fun disableNativeTgk() {
+        // Stop injection first, even if a later vendor setter fails.
+        call("setGlobalKeyEnable", arrayOf(Boolean::class.javaPrimitiveType!!), false)
         call("setTouchHapticFeedbackEnable", arrayOf(Boolean::class.javaPrimitiveType!!), false)
         call("setTgkTopEffectEnable", arrayOf(Boolean::class.javaPrimitiveType!!), false)
         call("setTgkCenterEffectEnable", arrayOf(Boolean::class.javaPrimitiveType!!), false)
@@ -180,6 +187,32 @@ class InputService : IInputService.Stub() {
     override fun getForegroundPackage(): String {
         val byActivity = getForegroundPackageByActivityTaskManager()
         return byActivity.ifBlank { getForegroundPackageBySettings() }
+    }
+
+    override fun watchForeground(listener: IForegroundListener) {
+        foregroundListener = listener
+        if (taskListener != null) return
+        val manager = Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null)
+        val listenerClass = Class.forName("android.app.ITaskStackListener")
+        val binder = object : Binder() {
+            init { attachInterface(null, "android.app.ITaskStackListener") }
+
+            override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                if (code in IBinder.FIRST_CALL_TRANSACTION..IBinder.LAST_CALL_TRANSACTION) {
+                    data.enforceInterface("android.app.ITaskStackListener")
+                    // Only the event matters; ActivityTaskManager supplies the foreground on re-query.
+                    runCatching { foregroundListener?.onForegroundChanged() }
+                    return true
+                }
+                return super.onTransact(code, data, reply, flags)
+            }
+        }
+        val proxy = Class.forName("android.app.ITaskStackListener\$Stub")
+            .getMethod("asInterface", IBinder::class.java).invoke(null, binder)
+        manager.javaClass.getMethod("registerTaskStackListener", listenerClass).invoke(manager, proxy)
+        taskManager = manager
+        taskListener = proxy
+        Log.i(TAG, "Task-stack foreground listener registered")
     }
 
     /**
@@ -452,8 +485,14 @@ class InputService : IInputService.Stub() {
     }
 
     override fun destroy() {
+        foregroundListener = null
+        runCatching {
+            taskManager?.javaClass?.getMethod("unregisterTaskStackListener", Class.forName("android.app.ITaskStackListener"))
+                ?.invoke(taskManager, taskListener)
+        }
         stopShoulderProbe()
         Log.i(TAG, "destroy")
+        kotlin.system.exitProcess(0)
     }
 
     private fun call(name: String, types: Array<Class<*>>, vararg args: Any) {
@@ -462,6 +501,7 @@ class InputService : IInputService.Stub() {
             method.invoke(inputManager, *args)
         } catch (e: Exception) {
             Log.w(TAG, "Failed $name: ${e.message}", e)
+            throw IllegalStateException("$name failed: ${e.cause?.message ?: e.message}", e)
         }
     }
 

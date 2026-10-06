@@ -341,6 +341,7 @@ class OverlayPickService : Service() {
         }
 
         fun showMarkers(context: Context, packageName: String) {
+            if (!TriggerService.nativeActive || TriggerService.activeProfilePackage != packageName) return
             context.startService(Intent(context, OverlayPickService::class.java).apply {
                 action = ACTION_SHOW_MARKERS
                 putExtra(EXTRA_PACKAGE, packageName)

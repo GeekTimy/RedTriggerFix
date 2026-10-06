@@ -15,18 +15,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         DebugLog.log("Activity", "MainActivity created")
-
-        val triggersEnabled = ProfileStore.isMasterEnabled(this)
-        val shizukuOk = try {
-            rikka.shizuku.Shizuku.pingBinder() &&
-                rikka.shizuku.Shizuku.checkSelfPermission() ==
-                android.content.pm.PackageManager.PERMISSION_GRANTED
-        } catch (_: Exception) {
-            false
-        }
-        if (shizukuOk && triggersEnabled && !TriggerService.isRunning) {
-            startForegroundService(android.content.Intent(this, TriggerService::class.java))
-        }
+        NativeTgkController.init(this)
 
         setContent {
             RedTriggerTheme {
@@ -34,6 +23,16 @@ class MainActivity : ComponentActivity() {
                     MainScreen()
                 }
             }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Shizuku can arrive after onCreate. The guard waits and reconnects itself.
+        if (ProfileStore.isMasterEnabled(this) && !TriggerService.isRunning) {
+            runCatching {
+                startForegroundService(android.content.Intent(this, TriggerService::class.java))
+            }.onFailure { DebugLog.log("Activity", "Guard restore failed: ${it.message}") }
         }
     }
 

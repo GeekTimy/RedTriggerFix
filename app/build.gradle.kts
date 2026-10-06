@@ -26,8 +26,8 @@ android {
         applicationId = "com.redtriggerfix"
         minSdk = 29
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.0.0"
+        versionCode = 7
+        versionName = "1.0.3"
 
         vectorDrawables {
             useSupportLibrary = true

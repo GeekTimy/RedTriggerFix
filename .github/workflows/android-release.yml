@@ -62,9 +62,16 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
+      - name: Extract release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          awk -v version="${GITHUB_REF_NAME#v}" '/^## / { if (found) exit; found = ($2 == version); next } found { print }' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: app/build/outputs/apk/release/*.apk
+          body_path: release-notes.md
           generate_release_notes: true

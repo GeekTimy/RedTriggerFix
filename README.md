@@ -4,9 +4,9 @@ RedTriggerFix 是一个面向红魔 / Nubia RMOS 设备的肩键桥接工具。�
 
 这个项目不是通用 Android keymapper。它依赖红魔系统中的 vendor 扩展接口，只适用于支持相关 TGK 方法的设备。
 
-## 🎆 功能（v1.0）
+## 功能（v1.0.3）
 
-🎉 v1.0 是第一个稳定大版本：每应用横竖双配置、按设备方向自动切换、坐标越界保护与干净释放，在反复真机测试下已相当鲁棒。
+1.0.3 在每应用横竖双配置的基础上，修复守护恢复、切回游戏漏检测和原生映射被关闭后的恢复。具体更改见 [CHANGELOG.md](CHANGELOG.md)。
 
 - 🎮 为不同应用保存独立肩键配置，进入目标应用时自动启用、离开时自动释放。
 - 🔄 **每应用横屏 / 竖屏各一套坐标**，每个方向独立「使用肩键」开关（可都开）。
@@ -31,7 +31,28 @@ RedTriggerFix 是一个面向红魔 / Nubia RMOS 设备的肩键桥接工具。�
 7. 进入目标应用后，RedTriggerFix 会自动应用该应用的肩键配置。
 8. 离开目标应用后，守护服务会释放当前 TGK 映射。
 
-如果需要确认运行时位置，可以在应用配置中开启 L/R 标记显示。
+如果需要确认运行时位置，可以在应用配置中开启 L/R 标记显示。标记在原生开关核验通过后显示；实际触摸命中仍需在目标应用中确认。
+
+## 守护恢复与诊断
+
+- 系统任务事件和厂商通知触发前台检查，并保留默认两秒的原生状态核验；一致时不重复写入映射。
+- 总开关开启时，划掉最近任务卡片保留 Shizuku 后端；关闭总开关会释放映射并销毁后端。系统“强行停止”、关闭 Shizuku 或重启设备不等同于划掉卡片。
+- 前台判断、状态核验和标记仍由应用内守护执行。应用进程被系统杀掉后，这些工作需要等待系统重建；后端独立驻留不保证即时恢复。
+- 当前版本沿用自有配置与原生 TGK 接口，没有集成官方面板别名方案。
+
+查看当前前台、后端连接和最近核验结果：
+
+```text
+adb -s <serial> shell dumpsys activity service com.redtriggerfix/com.redtrigger.TriggerService
+```
+
+后端生命周期验证：先停留在 RedTriggerFix 界面，开启守护并等待后端连接，再运行：
+
+```powershell
+pwsh -File scripts/check-backend-lifecycle.ps1 -Serial <serial> -Adb <adb路径>
+```
+
+脚本会停止并重新打开 RedTriggerFix，检查后端 PID 是否保留、守护是否重新连接；不清除配置。它不代替游戏中的实际肩键测试。
 
 ## 权限
 
@@ -115,11 +136,7 @@ sdk.dir=C\:\\Users\\you\\AppData\\Local\\Android\\Sdk
 
 ## 下载
 
-发布版 APK 会放在 GitHub Releases：
-
-```text
-https://github.com/GeekTimy/RedTriggerFix/releases
-```
+从 [GitHub Releases](https://github.com/GeekTimy/RedTriggerFix/releases) 下载签名发布版 APK。
 
 ## License
 

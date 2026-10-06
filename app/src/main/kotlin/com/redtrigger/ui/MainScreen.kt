@@ -153,7 +153,7 @@ fun MainContent() {
 
     // 初始化/刷新两个调试开关的真实状态。
     LaunchedEffect(shizukuState) {
-        if (shizukuUsable) {
+        if (NativeTgkController.state == NativeTgkController.State.CONNECTED) {
             NativeTgkController.debugToggles { toggles ->
                 showTouches = statusValue(toggles, "show_touches") == "1"
                 pointerLocation = statusValue(toggles, "pointer_location") == "1"
@@ -171,10 +171,10 @@ fun MainContent() {
     // 主动获取活跃/前台应用（shell getActivePackages），不依赖守护是否运行。
     LaunchedEffect(shizukuState) {
         while (true) {
-            if (shizukuUsable) {
+            // Automatic UI refresh must not recreate a backend stopped by the master switch.
+            if (NativeTgkController.state == NativeTgkController.State.CONNECTED) {
                 NativeTgkController.refreshActivePackages { packages ->
                     shellActivePackages = packages
-                    packages.firstOrNull()?.takeIf { it.isNotBlank() }?.let { foreground = it }
                 }
             }
             delay(3500)
@@ -304,7 +304,7 @@ fun MainContent() {
                 onStop = {
                     NativeTgkController.stopSelfTest()
                     testRunning = false
-                    testStatus = "已停止并释放（releaseTgk），未改动任何应用配置"
+                    testStatus = "已停止并释放，未改动任何应用配置"
                 }
             )
 
@@ -1009,6 +1009,7 @@ private fun StatusCard(
         StatusText("Vendor TGK 开关", tgkSummary(nativeStatus))
         StatusText("肩键事件 F7/F8", if (left + right > 0) "可见 L=$left R=$right" else "未捕获")
         StatusText("守护服务", if (serviceRunning) "运行中" else "未运行")
+        StatusText("最近核验", TriggerService.lastDecision)
         StatusText("前台包名", foreground.ifBlank { "-" })
         Divider(color = StrokeDim)
         ToggleLine("开机后自动恢复守护", autoBoot, onAutoBoot)
